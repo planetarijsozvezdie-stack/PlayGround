@@ -473,6 +473,47 @@ class SqliteRepository implements Repository {
   }
 
   @override
+  Future<void> saveTemplate(TemplateRecord template) async {
+    await _db.transaction((txn) async {
+      final existing = await _rowById(txn, 'contract_templates', template.id);
+      final now = _now();
+      if (existing == null) {
+        await txn.insert('contract_templates', {
+          'id': template.id,
+          'company_id': template.companyId,
+          'type': template.type.name,
+          'name': template.name,
+          'template_content': template.body,
+          'variables': '[]',
+          'is_active': 1,
+          'created_at': now,
+          'updated_at': now,
+          'version': 1,
+        });
+        await _log(txn, 'contract_templates', template.id, '*', '', 'создано');
+      } else {
+        final previousBody = existing['template_content'] as String? ?? '';
+        await txn.rawUpdate(
+          'UPDATE contract_templates SET name = ?, template_content = ?, '
+          'updated_at = ?, version = version + 1 WHERE id = ?',
+          [template.name, template.body, now, template.id],
+        );
+        if (previousBody != template.body) {
+          await _log(
+            txn,
+            'contract_templates',
+            template.id,
+            'template_content',
+            previousBody,
+            template.body,
+          );
+        }
+      }
+      await _enqueue(txn, 'contract_templates', template.id, 'upsert');
+    });
+  }
+
+  @override
   Future<List<DocumentRecord>> documents(String companyId) async {
     final rows = await _db.query(
       'documents',

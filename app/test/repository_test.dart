@@ -349,6 +349,43 @@ void main() {
     );
   });
 
+  test('шаблон договора сохраняется', () async {
+    final original = (await repository.templates('c-lunny')).first;
+    await repository.saveTemplate(
+      TemplateRecord(
+        id: original.id,
+        companyId: original.companyId,
+        type: original.type,
+        name: original.name,
+        body: 'Новый текст {{institution_name}}',
+      ),
+    );
+    final updated = (await repository.templates('c-lunny'))
+        .firstWhere((template) => template.id == original.id);
+    expect(updated.body, 'Новый текст {{institution_name}}');
+  });
+
+  test('старый PIN обновляется до Argon2id после входа', () async {
+    final memory = await MemoryRepository.create();
+    final legacy = hashPinPbkdf2('4271', iterations: 1000);
+    await memory.setSetting(pinHashKey, legacy.hash);
+    await memory.setSetting(pinSaltKey, legacy.salt);
+    await memory.setSetting(pinIterationsKey, '${legacy.iterations}');
+    await memory.setSetting(pinAlgorithmKey, legacy.algorithm);
+
+    final controller = LockController(memory);
+    expect(await controller.unlock('4271'), isTrue);
+    var algorithm = '';
+    for (var i = 0; i < 50; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      algorithm = await memory.setting(pinAlgorithmKey, '');
+      if (algorithm == pinAlgorithmArgon2id) break;
+    }
+    expect(algorithm, pinAlgorithmArgon2id);
+    expect(await memory.setting(pinIterationsKey, ''), '$pinArgon2Iterations');
+    controller.dispose();
+  });
+
   test('повреждённая копия отклоняется без изменения данных', () async {
     expect(
       () => repository.restoreBackup({'format': 'other', 'version': 1}),

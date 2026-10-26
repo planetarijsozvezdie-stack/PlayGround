@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:printing/printing.dart';
 
 import '../core/company_time.dart';
 import '../core/export_data.dart';
 import '../core/money.dart';
+import '../core/revenue_analytics.dart';
 import '../core/revenue_pdf.dart';
 import '../core/ru_format.dart';
 import '../data/models.dart';
@@ -26,26 +29,78 @@ class RevenueScreen extends ConsumerWidget {
     final stats = ref.watch(statsProvider).valueOrNull;
     final revenues =
         ref.watch(revenuesProvider).valueOrNull ?? const <Revenue>[];
-    final now = DateTime.now();
+    final companyTotals =
+        ref.watch(companyRevenueTotalsProvider).valueOrNull ??
+        const <String, int>{};
+    final companies = ref.watch(sessionProvider).companies;
+    final today = todayInCompany(company.timezone);
     final months = List.generate(
       6,
-      (i) => DateTime(now.year, now.month - 5 + i),
+      (i) => DateTime(today.year, today.month - 5 + i),
     );
     final totals = months
-        .map(
-          (month) => revenues
-              .where((r) => monthKey(r.date) == monthKey(month))
-              .fold(0, (sum, r) => sum + r.amountKopecks),
-        )
+        .map((month) => revenueTotalForMonth(revenues, month))
         .toList();
+    final monthTotal = revenueTotalForMonth(revenues, today);
+    final previousMonthTotal = revenueTotalForMonth(
+      revenues,
+      DateTime(today.year, today.month - 1),
+    );
+    final yearTotal = revenueTotalForYear(revenues, today);
+    final previousYearTotal = revenueTotalForYear(
+      revenues,
+      DateTime(today.year - 1),
+    );
+    final todayTotal = revenueTotalOnDay(revenues, today);
+    final todayOperations = revenues
+        .where((revenue) => isoDate(revenue.date) == isoDate(today))
+        .length;
+    final daily = revenueDailySeries(revenues, today);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
       children: [
         _RevenueHero(
-          revenueKopecks: stats?.revenueKopecks ?? 0,
+          revenueKopecks: monthTotal,
           taxKopecks: stats?.taxKopecks ?? 0,
           sessions: stats?.completedSessions ?? 0,
+          comparison: _comparisonLabel(
+            monthTotal,
+            previousMonthTotal,
+            'к прошлому месяцу',
+          ),
+          comparisonColor: monthTotal >= previousMonthTotal
+              ? CosmicColors.success
+              : CosmicColors.danger,
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _PeriodCard(
+                label: 'Сегодня',
+                value: todayTotal,
+                note:
+                    '$todayOperations '
+                    '${pluralRu(todayOperations, 'операция', 'операции', 'операций')}',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _PeriodCard(
+                label: 'Год',
+                value: yearTotal,
+                note: _comparisonLabel(
+                  yearTotal,
+                  previousYearTotal,
+                  'к прошлому году',
+                ),
+                noteColor: yearTotal >= previousYearTotal
+                    ? CosmicColors.success
+                    : CosmicColors.danger,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         Container(
@@ -79,6 +134,45 @@ class RevenueScreen extends ConsumerWidget {
               ),
             ],
           ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+          decoration: BoxDecoration(
+            color: CosmicColors.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: CosmicColors.line),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Последние 30 дней',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: CosmicColors.text2,
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 110,
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: _LineChartPainter(
+                    values: daily,
+                    color: CosmicColors.accent2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _CompanyRevenueCard(
+          companies: companies,
+          totals: companyTotals,
+          selectedCompanyId: company.id,
         ),
         const SizedBox(height: 12),
         Container(
@@ -160,10 +254,17 @@ class RevenueScreen extends ConsumerWidget {
                   unawaited(_openRevenuePdf(context, company, revenues, stats));
                   return;
                 }
+                if (value == 'share') {
+                  unawaited(
+                    _shareRevenuePdf(context, company, revenues, stats),
+                  );
+                  return;
+                }
                 exportTable(context, revenuesTable(revenues), value);
               },
               itemBuilder: (context) => const [
                 PopupMenuItem(value: 'pdf', child: Text('PDF-отчёт')),
+                PopupMenuItem(value: 'share', child: Text('Поделиться PDF')),
                 PopupMenuItem(value: 'xlsx', child: Text('Экспорт XLSX')),
                 PopupMenuItem(value: 'csv', child: Text('Экспорт CSV')),
               ],
@@ -201,6 +302,34 @@ class RevenueScreen extends ConsumerWidget {
   }
 }
 
+Future<(Uint8List, String)> _revenuePdfBytes(
+  Company company,
+  List<Revenue> revenues,
+  DashboardStats? stats,
+) async {
+  final now = todayInCompany(company.timezone);
+  final months = List.generate(6, (i) => DateTime(now.year, now.month - 5 + i));
+  final bytes = await buildRevenueReportPdf(
+    company: company,
+    revenues: revenues,
+    months: months,
+    stats:
+        stats ??
+        const DashboardStats(
+          completedSessions: 0,
+          revenueKopecks: 0,
+          plannedEvents: 0,
+          taxKopecks: 0,
+          deductionRemainingKopecks: 1000000,
+        ),
+    reportDate: now,
+  );
+  final fileName =
+      'Выручка-${company.shortName}-${now.year}-'
+      '${now.month.toString().padLeft(2, '0')}.pdf';
+  return (bytes, fileName);
+}
+
 Future<void> _openRevenuePdf(
   BuildContext context,
   Company company,
@@ -208,29 +337,7 @@ Future<void> _openRevenuePdf(
   DashboardStats? stats,
 ) async {
   try {
-    final now = DateTime.now();
-    final months = List.generate(
-      6,
-      (i) => DateTime(now.year, now.month - 5 + i),
-    );
-    final bytes = await buildRevenueReportPdf(
-      company: company,
-      revenues: revenues,
-      months: months,
-      stats:
-          stats ??
-          const DashboardStats(
-            completedSessions: 0,
-            revenueKopecks: 0,
-            plannedEvents: 0,
-            taxKopecks: 0,
-            deductionRemainingKopecks: 1000000,
-          ),
-      reportDate: now,
-    );
-    final fileName =
-        'Выручка-${company.shortName}-${now.year}-'
-        '${now.month.toString().padLeft(2, '0')}.pdf';
+    final (bytes, fileName) = await _revenuePdfBytes(company, revenues, stats);
     final path = await saveDocumentBytes(fileName: fileName, bytes: bytes);
     if (path == null) {
       throw StateError('не удалось сохранить файл');
@@ -244,16 +351,37 @@ Future<void> _openRevenuePdf(
   }
 }
 
+Future<void> _shareRevenuePdf(
+  BuildContext context,
+  Company company,
+  List<Revenue> revenues,
+  DashboardStats? stats,
+) async {
+  try {
+    final (bytes, fileName) = await _revenuePdfBytes(company, revenues, stats);
+    await Printing.sharePdf(bytes: bytes, filename: fileName);
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Не удалось поделиться PDF-отчётом: $error')),
+    );
+  }
+}
+
 class _RevenueHero extends StatelessWidget {
   const _RevenueHero({
     required this.revenueKopecks,
     required this.taxKopecks,
     required this.sessions,
+    required this.comparison,
+    required this.comparisonColor,
   });
 
   final int revenueKopecks;
   final int taxKopecks;
   final int sessions;
+  final String comparison;
+  final Color comparisonColor;
 
   @override
   Widget build(BuildContext context) {
@@ -305,6 +433,23 @@ class _RevenueHero extends StatelessWidget {
               _MiniStat(
                 label: 'к получению',
                 value: formatKopecks(revenueKopecks - taxKopecks),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(
+                revenueKopecks >= 0
+                    ? Icons.insights_outlined
+                    : Icons.trending_down,
+                size: 13,
+                color: comparisonColor,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                comparison,
+                style: TextStyle(fontSize: 10, color: comparisonColor),
               ),
             ],
           ),
@@ -497,4 +642,345 @@ class _BarChartPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _BarChartPainter oldDelegate) =>
       oldDelegate.values != values || oldDelegate.labels != labels;
+}
+
+String _comparisonLabel(int current, int previous, String suffix) {
+  final percent = revenueChangePercent(current, previous);
+  if (percent == null) {
+    return current == 0
+        ? 'нет данных за прошлый период'
+        : 'раньше выручки не было';
+  }
+  final sign = percent > 0 ? '+' : '';
+  return '$sign$percent% $suffix';
+}
+
+class _PeriodCard extends StatelessWidget {
+  const _PeriodCard({
+    required this.label,
+    required this.value,
+    required this.note,
+    this.noteColor = CosmicColors.muted,
+  });
+
+  final String label;
+  final int value;
+  final String note;
+  final Color noteColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: CosmicColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: CosmicColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 9,
+              letterSpacing: 0.9,
+              color: CosmicColors.muted,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              formatKopecks(value),
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            note,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 9, color: noteColor, height: 1.2),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CompanyRevenueCard extends StatelessWidget {
+  const _CompanyRevenueCard({
+    required this.companies,
+    required this.totals,
+    required this.selectedCompanyId,
+  });
+
+  final List<Company> companies;
+  final Map<String, int> totals;
+  final String selectedCompanyId;
+
+  static const _colors = [
+    CosmicColors.accent2,
+    CosmicColors.success,
+    CosmicColors.warning,
+    CosmicColors.danger,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = companies
+        .map((company) => (company: company, value: totals[company.id] ?? 0))
+        .toList();
+    final total = entries.fold(0, (sum, entry) => sum + entry.value);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: CosmicColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: CosmicColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Выручка по компаниям',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: CosmicColors.text2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'За текущий месяц, ${formatKopecks(total)}',
+            style: const TextStyle(fontSize: 10, color: CosmicColors.muted),
+          ),
+          const SizedBox(height: 12),
+          if (total <= 0)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Нет выручки за этот месяц',
+                style: TextStyle(fontSize: 11, color: CosmicColors.muted),
+              ),
+            )
+          else
+            Row(
+              children: [
+                SizedBox(
+                  width: 92,
+                  height: 92,
+                  child: CustomPaint(
+                    painter: _PieChartPainter(
+                      values: entries.map((entry) => entry.value).toList(),
+                      colors: [
+                        for (var i = 0; i < entries.length; i++)
+                          _colors[i % _colors.length],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < entries.length; i++)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: _colors[i % _colors.length],
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  entries[i].company.shortName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: CosmicColors.text2,
+                                    fontWeight:
+                                        entries[i].company.id ==
+                                            selectedCompanyId
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                formatKopecks(entries[i].value),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: CosmicColors.text,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              SizedBox(
+                                width: 32,
+                                child: Text(
+                                  total == 0
+                                      ? ''
+                                      : '${(entries[i].value * 100 / total).round()}%',
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: CosmicColors.muted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PieChartPainter extends CustomPainter {
+  const _PieChartPainter({required this.values, required this.colors});
+
+  final List<int> values;
+  final List<Color> colors;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final total = values.fold(0, (sum, value) => sum + value);
+    final rect = Rect.fromCircle(
+      center: Offset(size.width / 2, size.height / 2),
+      radius: size.shortestSide / 2 - 6,
+    );
+    if (total <= 0) {
+      canvas.drawCircle(
+        rect.center,
+        rect.width / 2,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 12
+          ..color = CosmicColors.line,
+      );
+      return;
+    }
+    var start = -math.pi / 2;
+    for (var i = 0; i < values.length; i++) {
+      final sweep = values[i] <= 0 ? 0.0 : math.pi * 2 * values[i] / total;
+      if (sweep <= 0) continue;
+      canvas.drawArc(
+        rect,
+        start,
+        sweep,
+        true,
+        Paint()..color = colors[i % colors.length],
+      );
+      start += sweep;
+    }
+    canvas.drawCircle(
+      rect.center,
+      rect.width / 4.6,
+      Paint()..color = CosmicColors.surface,
+    );
+    final label = TextPainter(
+      text: TextSpan(
+        text: '₽',
+        style: const TextStyle(
+          color: CosmicColors.text2,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    label.paint(
+      canvas,
+      rect.center - Offset(label.width / 2, label.height / 2),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PieChartPainter oldDelegate) {
+    return oldDelegate.values != values || oldDelegate.colors != colors;
+  }
+}
+
+class _LineChartPainter extends CustomPainter {
+  const _LineChartPainter({required this.values, required this.color});
+
+  final List<int> values;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.isEmpty) return;
+    final maxValue = values.fold(0, math.max);
+    final gridPaint = Paint()
+      ..color = CosmicColors.line.withValues(alpha: 0.6)
+      ..strokeWidth = 1;
+    for (var i = 0; i < 3; i++) {
+      final y = size.height * i / 2;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+    if (maxValue <= 0) return;
+    final step = values.length == 1
+        ? size.width
+        : size.width / (values.length - 1);
+    final path = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x = step * i;
+      final y = size.height - (values[i] / maxValue) * (size.height - 8) - 2;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final fill = Path.from(path)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            color.withValues(alpha: 0.28),
+            color.withValues(alpha: 0.02),
+          ],
+        ).createShader(Offset.zero & size),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..color = color,
+    );
+    final lastX = step * (values.length - 1);
+    final lastY =
+        size.height - (values.last / maxValue) * (size.height - 8) - 2;
+    canvas.drawCircle(Offset(lastX, lastY), 3.5, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LineChartPainter oldDelegate) {
+    return oldDelegate.values != values || oldDelegate.color != color;
+  }
 }

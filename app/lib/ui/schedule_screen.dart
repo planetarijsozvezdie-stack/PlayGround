@@ -22,9 +22,21 @@ class ScheduleScreen extends ConsumerStatefulWidget {
   ConsumerState<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
+enum _ScheduleView {
+  day('день'),
+  week('неделя'),
+  month('месяц');
+
+  const _ScheduleView(this.label);
+
+  final String label;
+}
+
+const String _allInstitutionsValue = '__all__';
+
 class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
   EventStatus _status = EventStatus.scheduled;
-  bool _week = false;
+  _ScheduleView _view = _ScheduleView.day;
   late DateTime _selectedDay;
   final Set<String> _hidden = {};
   final _search = TextEditingController();
@@ -69,7 +81,17 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
     final monday = _selectedDay.subtract(
       Duration(days: _selectedDay.weekday - 1),
     );
-    final days = List.generate(7, (i) => monday.add(Duration(days: i)));
+    final days = switch (_view) {
+      _ScheduleView.day => [_selectedDay],
+      _ScheduleView.week => List.generate(
+        7,
+        (i) => monday.add(Duration(days: i)),
+      ),
+      _ScheduleView.month => List.generate(
+        DateTime(_selectedDay.year, _selectedDay.month + 1, 0).day,
+        (i) => DateTime(_selectedDay.year, _selectedDay.month, i + 1),
+      ),
+    };
 
     return Column(
       children: [
@@ -128,11 +150,14 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  PopupMenuButton<String?>(
+                  PopupMenuButton<String>(
                     tooltip: 'Фильтр по учреждению',
-                    initialValue: _institutionId,
-                    onSelected: (value) =>
-                        setState(() => _institutionId = value),
+                    initialValue: _institutionId ?? _allInstitutionsValue,
+                    onSelected: (value) => setState(() {
+                      _institutionId = value == _allInstitutionsValue
+                          ? null
+                          : value;
+                    }),
                     icon: Icon(
                       Icons.filter_alt_outlined,
                       size: 20,
@@ -141,12 +166,12 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
                           : CosmicColors.accent2,
                     ),
                     itemBuilder: (context) => [
-                      const PopupMenuItem<String?>(
-                        value: null,
+                      const PopupMenuItem<String>(
+                        value: _allInstitutionsValue,
                         child: Text('Все учреждения'),
                       ),
                       for (final institution in institutions)
-                        PopupMenuItem<String?>(
+                        PopupMenuItem<String>(
                           value: institution.id,
                           child: Text(institution.displayName),
                         ),
@@ -175,7 +200,7 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
               Row(
                 children: [
                   IconButton(
-                    onPressed: () => _shift(-(_week ? 7 : 1)),
+                    onPressed: () => _shift(-1),
                     icon: const Icon(Icons.chevron_left),
                     tooltip: 'Назад',
                   ),
@@ -188,9 +213,15 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
                         child: Column(
                           children: [
                             Text(
-                              _week
-                                  ? '${formatDateShortRu(days.first)} — ${formatDateShortRu(days.last)}'
-                                  : formatDateRu(_selectedDay),
+                              switch (_view) {
+                                _ScheduleView.day => formatDateRu(_selectedDay),
+                                _ScheduleView.week =>
+                                  '${formatDateShortRu(days.first)} — '
+                                      '${formatDateShortRu(days.last)}',
+                                _ScheduleView.month => formatMonthYearRu(
+                                  _selectedDay,
+                                ),
+                              },
                               style: const TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -198,7 +229,7 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              _week ? 'неделя' : 'день',
+                              _view.label,
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: CosmicColors.muted,
@@ -210,38 +241,45 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
                     ),
                   ),
                   IconButton(
-                    onPressed: () => _shift(_week ? 7 : 1),
+                    onPressed: () => _shift(1),
                     icon: const Icon(Icons.chevron_right),
                     tooltip: 'Вперёд',
                   ),
-                  IconButton(
-                    onPressed: () => setState(() => _week = !_week),
-                    tooltip: _week ? 'Показать день' : 'Показать неделю',
-                    icon: Icon(
-                      _week
-                          ? Icons.view_day_outlined
-                          : Icons.view_week_outlined,
-                      color: CosmicColors.accent2,
-                    ),
+                  PopupMenuButton<_ScheduleView>(
+                    tooltip: 'Вид',
+                    initialValue: _view,
+                    onSelected: (value) => setState(() => _view = value),
+                    icon: Icon(switch (_view) {
+                      _ScheduleView.day => Icons.view_day_outlined,
+                      _ScheduleView.week => Icons.view_week_outlined,
+                      _ScheduleView.month => Icons.calendar_view_month,
+                    }, color: CosmicColors.accent2),
+                    itemBuilder: (context) => [
+                      for (final view in _ScheduleView.values)
+                        PopupMenuItem(value: view, child: Text(view.label)),
+                    ],
                   ),
                 ],
               ),
-              SizedBox(
-                height: 58,
-                child: Row(
-                  children: [
-                    for (final day in days)
-                      Expanded(
-                        child: _DayChip(
-                          day: day,
-                          selected: _sameDay(day, _selectedDay),
-                          hasEvents: filtered.any((e) => _sameDay(e.date, day)),
-                          onTap: () => setState(() => _selectedDay = day),
+              if (_view != _ScheduleView.month)
+                SizedBox(
+                  height: 58,
+                  child: Row(
+                    children: [
+                      for (final day in days)
+                        Expanded(
+                          child: _DayChip(
+                            day: day,
+                            selected: _sameDay(day, _selectedDay),
+                            hasEvents: filtered.any(
+                              (e) => _sameDay(e.date, day),
+                            ),
+                            onTap: () => setState(() => _selectedDay = day),
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
               const SizedBox(height: 4),
             ],
           ),
@@ -253,12 +291,12 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
 
   Widget _buildList(
     List<Event> filtered,
-    List<DateTime> weekDays,
+    List<DateTime> periodDays,
     bool hasPeriodFilter,
   ) {
     final items = <Widget>[];
-    if (_week) {
-      for (final day in weekDays) {
+    if (_view != _ScheduleView.day) {
+      for (final day in periodDays) {
         final dayEvents = filtered.where((e) => _sameDay(e.date, day)).toList();
         if (dayEvents.isEmpty) continue;
         items.add(
@@ -374,6 +412,7 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
   Future<void> _delete(Event event) async {
     setState(() => _hidden.add(event.id));
     await ref.read(repositoryProvider).deleteEvent(event.id);
+    unawaited(ref.read(calendarServiceProvider).autoRemoveEvent(event));
     invalidateBusinessData(ref);
     unawaited(refreshReminders(ref));
     if (!mounted) return;
@@ -384,6 +423,7 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
           label: 'Вернуть',
           onPressed: () async {
             await ref.read(repositoryProvider).restoreEvent(event.id);
+            unawaited(ref.read(calendarServiceProvider).autoSyncEvent(event));
             if (!mounted) return;
             setState(() => _hidden.remove(event.id));
             invalidateBusinessData(ref);
@@ -396,13 +436,18 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
 
   Future<void> _handleAction(Event event, String action) async {
     final repository = ref.read(repositoryProvider);
+    final calendar = ref.read(calendarServiceProvider);
+    Event? updated;
     switch (action) {
       case 'complete':
         await repository.completeEvent(event.id);
+        updated = event.copyWith(status: EventStatus.completed);
       case 'cancel':
         await repository.cancelEvent(event.id);
+        updated = event.copyWith(status: EventStatus.cancelled);
       case 'reopen':
         await repository.reopenEvent(event.id);
+        updated = event.copyWith(status: EventStatus.scheduled);
       case 'edit':
         await showAddEventDialog(context, ref, event: event);
         return;
@@ -411,13 +456,22 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
         if (confirmed) await _delete(event);
         return;
     }
+    if (updated != null) unawaited(calendar.autoSyncEvent(updated));
     invalidateBusinessData(ref);
     unawaited(refreshReminders(ref));
   }
 
-  void _shift(int days) {
+  void _shift(int direction) {
     setState(() {
-      _selectedDay = _selectedDay.add(Duration(days: days));
+      _selectedDay = switch (_view) {
+        _ScheduleView.day => _selectedDay.add(Duration(days: direction)),
+        _ScheduleView.week => _selectedDay.add(Duration(days: 7 * direction)),
+        _ScheduleView.month => DateTime(
+          _selectedDay.year,
+          _selectedDay.month + direction,
+          1,
+        ),
+      };
     });
   }
 

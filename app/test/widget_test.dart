@@ -6,6 +6,7 @@ import 'package:planetarium_manager/core/company_time.dart';
 import 'package:planetarium_manager/core/pin.dart';
 import 'package:planetarium_manager/core/ru_format.dart';
 import 'package:planetarium_manager/data/memory_repository.dart';
+import 'package:planetarium_manager/data/models.dart';
 import 'package:planetarium_manager/state/providers.dart';
 
 void main() {
@@ -55,7 +56,7 @@ void main() {
 
     await tester.tap(find.text('Расписание').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('22').first);
+    await tester.tap(find.byTooltip('Вперёд'));
     await tester.pumpAndSettle();
 
     final title = find.text('Детский сад №23');
@@ -69,6 +70,54 @@ void main() {
     await tester.enterText(find.byType(TextField), 'нет такого учреждения');
     await tester.pumpAndSettle();
     expect(find.textContaining('Ничего не найдено'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Вид'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('месяц').last);
+    await tester.pumpAndSettle();
+    expect(find.text('месяц'), findsOneWidget);
+  });
+
+  testWidgets('выручка показывает сравнения, 30 дней и компании', (
+    tester,
+  ) async {
+    await ensureRussianLocale();
+    ensureTimeZones();
+    final repository = await MemoryRepository.create();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repository)],
+        child: const PlanetariumApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Выбрать').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выручка').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('ВЫРУЧКА ЗА МЕСЯЦ'), findsOneWidget);
+    expect(find.text('СЕГОДНЯ'), findsOneWidget);
+    expect(find.text('ГОД'), findsOneWidget);
+
+    final revenueList = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(
+      find.text('Последние 30 дней'),
+      200,
+      scrollable: revenueList,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Последние 30 дней'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Выручка по компаниям'),
+      200,
+      scrollable: revenueList,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Выручка по компаниям'), findsOneWidget);
   });
 
   testWidgets('архив предлагает шаблон договора', (tester) async {
@@ -90,12 +139,115 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Архив'));
     await tester.pumpAndSettle();
+    expect(find.byTooltip('Только подписанные'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, 'Договор'));
     await tester.pumpAndSettle();
 
     final generate = find.widgetWithText(FilledButton, 'Сформировать');
     expect(generate, findsOneWidget);
     expect(tester.widget<FilledButton>(generate).onPressed, isNotNull);
+  });
+
+  testWidgets('архив фильтрует подписанные документы', (tester) async {
+    await ensureRussianLocale();
+    ensureTimeZones();
+    final repository = await MemoryRepository.create();
+    await repository.addDocument(
+      DocumentRecord(
+        id: 'doc-signed',
+        companyId: 'c-lunny',
+        eventId: null,
+        type: 'contract',
+        number: 'ПЛ-ЛД-Д-2026-0001',
+        title: 'Подписанный договор',
+        filePath: null,
+        sizeBytes: 1024,
+        createdAt: DateTime(2026, 10, 20),
+      ),
+    );
+    await repository.setDocumentSigned('doc-signed', true);
+    await repository.addDocument(
+      DocumentRecord(
+        id: 'doc-draft',
+        companyId: 'c-lunny',
+        eventId: null,
+        type: 'act',
+        number: 'ПЛ-ЛД-А-2026-0002',
+        title: 'Черновик акта',
+        filePath: null,
+        sizeBytes: 1024,
+        createdAt: DateTime(2026, 10, 21),
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repository)],
+        child: const PlanetariumApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Выбрать').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Документы').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Архив'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Подписанный договор'), findsOneWidget);
+    expect(find.text('Черновик акта'), findsOneWidget);
+    await tester.tap(find.byTooltip('Только подписанные'));
+    await tester.pumpAndSettle();
+    expect(find.text('Подписанный договор'), findsOneWidget);
+    expect(find.text('Черновик акта'), findsNothing);
+  });
+
+  testWidgets('шаблон договора редактируется и сохраняется', (tester) async {
+    await ensureRussianLocale();
+    ensureTimeZones();
+    final repository = await MemoryRepository.create();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repository)],
+        child: const PlanetariumApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Выбрать').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Документы').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Шаблоны'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Редактировать').first);
+    await tester.pumpAndSettle();
+    final editor = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    expect(editor, findsOneWidget);
+    await tester.enterText(editor, 'Новый текст {{institution_name}}');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Предпросмотр'));
+    await tester.pumpAndSettle();
+    final preview = tester.widget<SelectableText>(
+      find.byType(SelectableText).last,
+    );
+    expect(preview.data, contains('Новый текст'));
+    expect(preview.data, isNot(contains('{{institution_name}}')));
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Сохранить'));
+    await tester.pumpAndSettle();
+    expect(find.text('Шаблон сохранён'), findsOneWidget);
+    final templates = await repository.templates('c-lunny');
+    expect(
+      templates.any(
+        (template) => template.body == 'Новый текст {{institution_name}}',
+      ),
+      isTrue,
+    );
   });
 
   testWidgets('переключение вкладок не падает', (tester) async {
@@ -149,6 +301,13 @@ void main() {
     await tester.tap(find.text('Все: Тег').last);
     await tester.pumpAndSettle();
     expect(find.text('Найдено: 5'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Табличный вид'));
+    await tester.pumpAndSettle();
+    expect(find.text('Сеансы'), findsOneWidget);
+    expect(find.text('Был'), findsOneWidget);
+    await tester.tap(find.byTooltip('Карточки'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Выбрать несколько'));
     await tester.pumpAndSettle();
@@ -263,5 +422,38 @@ void main() {
     final toggle = find.byType(Switch);
     expect(toggle, findsOneWidget);
     expect(tester.widget<Switch>(toggle).onChanged, isNull);
+  });
+
+  testWidgets('демо-календарь синхронизирует и удаляет события', (
+    tester,
+  ) async {
+    await ensureRussianLocale();
+    ensureTimeZones();
+    final repository = await MemoryRepository.create();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repository)],
+        child: const PlanetariumApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Выбрать').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Показать меню'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Google Календарь'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Демо-режим'), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Событий в календаре:'), findsOneWidget);
+
+    final simulate = find.widgetWithText(TextButton, 'Имитировать удаление');
+    expect(tester.widget<TextButton>(simulate).onPressed, isNotNull);
+    await tester.tap(simulate);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Удалено из демо-Google:'), findsOneWidget);
   });
 }

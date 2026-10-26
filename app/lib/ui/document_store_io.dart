@@ -17,6 +17,14 @@ Future<String?> saveDocumentBytes({
   return file.path;
 }
 
+Future<Uint8List> readDocumentBytes(String path) async {
+  final file = File(path);
+  if (!await file.exists()) {
+    throw StateError('Файл не найден. Сформируйте документ повторно.');
+  }
+  return file.readAsBytes();
+}
+
 Future<void> openDocument(String path) async {
   if (!await File(path).exists()) {
     throw StateError('Файл не найден. Сформируйте документ повторно.');

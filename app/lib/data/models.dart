@@ -302,6 +302,7 @@ class Event {
     int? institutionPercentBp,
     String? notes,
     String? googleEventId,
+    bool clearGoogleEventId = false,
     Institution? institution,
   }) {
     final children = childrenCount ?? this.childrenCount;
@@ -335,7 +336,9 @@ class Event {
       netKopecks: pricing.netKopecks,
       status: status ?? this.status,
       notes: notes ?? this.notes,
-      googleEventId: googleEventId ?? this.googleEventId,
+      googleEventId: clearGoogleEventId
+          ? null
+          : (googleEventId ?? this.googleEventId),
     );
   }
 }

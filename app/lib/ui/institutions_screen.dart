@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../core/contact_links.dart';
 import '../core/export_data.dart';
 import '../core/ru_format.dart';
 import '../data/models.dart';
@@ -41,6 +43,7 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
   String? _district;
   String? _tag;
   bool _selecting = false;
+  bool _table = false;
   final Set<String> _selected = {};
   final Set<String> _hidden = {};
 
@@ -204,6 +207,16 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
                   ),
                   const Spacer(),
                   IconButton(
+                    tooltip: _table ? 'Карточки' : 'Табличный вид',
+                    onPressed: () => setState(() => _table = !_table),
+                    icon: Icon(
+                      _table
+                          ? Icons.grid_view_outlined
+                          : Icons.table_rows_outlined,
+                      size: 18,
+                    ),
+                  ),
+                  IconButton(
                     tooltip: _selecting
                         ? 'Завершить выбор'
                         : 'Выбрать несколько',
@@ -290,6 +303,28 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
                     style: TextStyle(color: CosmicColors.muted),
                   ),
                 )
+              : _table
+              ? Column(
+                  children: [
+                    _InstitutionTableHeader(selecting: _selecting),
+                    Expanded(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final institution = filtered[index];
+                          return _InstitutionTableRow(
+                            institution: institution,
+                            selecting: _selecting,
+                            selected: _selected.contains(institution.id),
+                            onSelected: (_) => _toggleSelected(institution.id),
+                            onTap: () => _openInstitution(institution),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                )
               : ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
                   itemCount: filtered.length,
@@ -299,26 +334,8 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
                       institution: institution,
                       selecting: _selecting,
                       selected: _selected.contains(institution.id),
-                      onSelected: (_) => setState(() {
-                        if (!_selected.add(institution.id)) {
-                          _selected.remove(institution.id);
-                        }
-                      }),
-                      onTap: () {
-                        if (_selecting) {
-                          setState(() {
-                            if (!_selected.add(institution.id)) {
-                              _selected.remove(institution.id);
-                            }
-                          });
-                          return;
-                        }
-                        showAddInstitutionDialog(
-                          context,
-                          ref,
-                          institution: institution,
-                        );
-                      },
+                      onSelected: (_) => _toggleSelected(institution.id),
+                      onTap: () => _openInstitution(institution),
                       onAction: (action) => _handleAction(institution, action),
                     );
                   },
@@ -326,6 +343,20 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
         ),
       ],
     );
+  }
+
+  void _toggleSelected(String id) {
+    setState(() {
+      if (!_selected.add(id)) _selected.remove(id);
+    });
+  }
+
+  void _openInstitution(Institution institution) {
+    if (_selecting) {
+      _toggleSelected(institution.id);
+      return;
+    }
+    showAddInstitutionDialog(context, ref, institution: institution);
   }
 
   Widget _buildSelectionBar() {
@@ -447,6 +478,22 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
     );
   }
 
+  Future<void> _composeEmail(Institution institution) async {
+    final uri = institutionEmailUri(
+      company: widget.company,
+      institution: institution,
+    );
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) throw StateError('почтовый клиент не найден');
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось открыть почту: $error')),
+      );
+    }
+  }
+
   Future<void> _forceDelete(Institution institution) async {
     _hidden.add(institution.id);
     setState(() {});
@@ -476,6 +523,8 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
             ),
           ),
         );
+      case 'email':
+        await _composeEmail(institution);
       case 'history':
         await showInstitutionHistory(context, ref, institution);
       case 'delete':
@@ -651,6 +700,11 @@ class _InstitutionCard extends StatelessWidget {
                                         : 'Отметить проверенным',
                                   ),
                                 ),
+                                if (institution.email.isNotEmpty)
+                                  const PopupMenuItem(
+                                    value: 'email',
+                                    child: Text('Написать письмо'),
+                                  ),
                                 const PopupMenuItem(
                                   value: 'history',
                                   child: Text('История изменений'),
@@ -778,6 +832,151 @@ class _Tag extends StatelessWidget {
   }
 }
 
+class _InstitutionTableHeader extends StatelessWidget {
+  const _InstitutionTableHeader({required this.selecting});
+
+  final bool selecting;
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+      fontSize: 10,
+      color: CosmicColors.muted,
+      fontWeight: FontWeight.w600,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+      child: Row(
+        children: [
+          if (selecting) const SizedBox(width: 40),
+          const SizedBox(width: 16),
+          const Expanded(child: Text('Учреждение', style: style)),
+          const SizedBox(
+            width: 44,
+            child: Text('Сеансы', textAlign: TextAlign.right, style: style),
+          ),
+          const SizedBox(
+            width: 62,
+            child: Text('Был', textAlign: TextAlign.right, style: style),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InstitutionTableRow extends StatelessWidget {
+  const _InstitutionTableRow({
+    required this.institution,
+    required this.selecting,
+    required this.selected,
+    required this.onSelected,
+    required this.onTap,
+  });
+
+  final Institution institution;
+  final bool selecting;
+  final bool selected;
+  final ValueChanged<bool?> onSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = _statusColor(institution.status);
+    final location = [
+      institution.city,
+      if (institution.district.isNotEmpty) institution.district,
+    ].join(', ');
+    final lastVisit = institution.lastVisitDate;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: CosmicColors.line)),
+          ),
+          child: Row(
+            children: [
+              if (selecting)
+                SizedBox(
+                  width: 40,
+                  child: Checkbox(
+                    value: selected,
+                    onChanged: onSelected,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              Tooltip(
+                message: institution.status.label,
+                child: Icon(
+                  switch (institution.status) {
+                    InstitutionStatus.verified => Icons.verified_outlined,
+                    InstitutionStatus.active => Icons.flag_outlined,
+                    InstitutionStatus.inactive => Icons.remove_circle_outline,
+                  },
+                  size: 14,
+                  color: statusColor,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        institution.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (location.isNotEmpty)
+                        Text(
+                          location,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: CosmicColors.muted,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 44,
+                child: Text(
+                  '${institution.totalVisits}',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+              SizedBox(
+                width: 62,
+                child: Text(
+                  lastVisit == null ? '—' : formatDateShortRu(lastVisit),
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: CosmicColors.muted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _FilterMenu extends StatelessWidget {
   const _FilterMenu({
     required this.label,
@@ -819,4 +1018,12 @@ class _FilterMenu extends StatelessWidget {
       ),
     );
   }
+}
+
+Color _statusColor(InstitutionStatus status) {
+  return switch (status) {
+    InstitutionStatus.verified => CosmicColors.success,
+    InstitutionStatus.active => CosmicColors.accent2,
+    InstitutionStatus.inactive => CosmicColors.muted,
+  };
 }

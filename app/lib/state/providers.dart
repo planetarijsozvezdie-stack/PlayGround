@@ -1,12 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/company_time.dart';
 import '../core/pin.dart';
+import '../core/revenue_analytics.dart';
 import '../services/biometric_service.dart';
+import '../services/calendar_service.dart';
 import '../data/models.dart';
 import '../data/repository.dart';
 
 final repositoryProvider = Provider<Repository>(
   (ref) => throw UnimplementedError('Repository is injected in main()'),
+);
+
+final calendarGatewayProvider = Provider<CalendarGateway>(
+  (ref) => FakeCalendarGateway(),
+);
+
+final calendarServiceProvider = Provider<CalendarService>(
+  (ref) => CalendarService(
+    ref.watch(repositoryProvider),
+    ref.watch(calendarGatewayProvider),
+  ),
 );
 
 class Session {
@@ -94,6 +110,20 @@ final revenuesProvider = FutureProvider<List<Revenue>>((ref) async {
   return ref.watch(repositoryProvider).revenues(id);
 });
 
+final companyRevenueTotalsProvider = FutureProvider<Map<String, int>>((
+  ref,
+) async {
+  final session = ref.watch(sessionProvider);
+  final repository = ref.watch(repositoryProvider);
+  final totals = <String, int>{};
+  for (final company in session.companies) {
+    final revenues = await repository.revenues(company.id);
+    final month = todayInCompany(company.timezone);
+    totals[company.id] = revenueTotalForMonth(revenues, month);
+  }
+  return totals;
+});
+
 final statsProvider = FutureProvider<DashboardStats>((ref) async {
   final id = _companyId(ref);
   if (id == null) {
@@ -135,6 +165,7 @@ void invalidateBusinessData(WidgetRef ref) {
   ref.invalidate(eventsProvider);
   ref.invalidate(revenuesProvider);
   ref.invalidate(statsProvider);
+  ref.invalidate(companyRevenueTotalsProvider);
   ref.invalidate(programsProvider);
   ref.invalidate(templatesProvider);
   ref.invalidate(documentsProvider);
@@ -271,13 +302,27 @@ class LockController extends StateNotifier<LockState> {
       );
       return false;
     }
+    final needsRehash = stored.needsRehash;
     await _clearFailures();
     state = state.copyWith(
       locked: false,
       failedAttempts: 0,
       clearLockedUntil: true,
     );
+    if (needsRehash) unawaited(_upgradePinHash(pin));
     return true;
+  }
+
+  Future<void> _upgradePinHash(String pin) async {
+    try {
+      final upgraded = await hashPin(pin);
+      await _repository.setSetting(pinHashKey, upgraded.hash);
+      await _repository.setSetting(pinSaltKey, upgraded.salt);
+      await _repository.setSetting(pinIterationsKey, '${upgraded.iterations}');
+      await _repository.setSetting(pinAlgorithmKey, upgraded.algorithm);
+    } catch (_) {
+      // Старый хеш остаётся рабочим, если обновление недоступно.
+    }
   }
 
   Future<void> _saveFailures(int attempts, DateTime? until) async {

@@ -398,6 +398,7 @@ class _EventDialogState extends ConsumerState<_EventDialog> {
             notes: _notes.text.trim(),
           );
     await ref.read(repositoryProvider).saveEvent(event);
+    unawaited(ref.read(calendarServiceProvider).autoSyncEvent(event));
     invalidateBusinessData(ref);
     unawaited(refreshReminders(ref));
     if (mounted) Navigator.pop(context);

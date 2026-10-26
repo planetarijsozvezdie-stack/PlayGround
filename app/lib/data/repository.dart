@@ -47,6 +47,8 @@ abstract class Repository {
 
   Future<List<TemplateRecord>> templates(String companyId);
 
+  Future<void> saveTemplate(TemplateRecord template);
+
   Future<List<DocumentRecord>> documents(String companyId);
 
   Future<void> addDocument(DocumentRecord value);

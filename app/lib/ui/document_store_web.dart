@@ -15,6 +15,19 @@ Future<String?> saveDocumentBytes({
   return '$_prefix$fileName';
 }
 
+Future<Uint8List> readDocumentBytes(String path) async {
+  if (!path.startsWith(_prefix)) {
+    throw StateError('Файл сохранён на другом устройстве.');
+  }
+  final bytes = _cache[path.substring(_prefix.length)];
+  if (bytes == null) {
+    throw StateError(
+      'В веб-версии PDF доступен только до перезагрузки страницы.',
+    );
+  }
+  return bytes;
+}
+
 Future<void> openDocument(String path) async {
   if (!path.startsWith(_prefix)) {
     throw StateError('Файл сохранён на другом устройстве.');

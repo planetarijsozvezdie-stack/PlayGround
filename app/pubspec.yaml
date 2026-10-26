@@ -30,6 +30,8 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   open_filex: ^5.0.0
   cryptography: ^2.9.0
+  printing: ^5.14.3
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

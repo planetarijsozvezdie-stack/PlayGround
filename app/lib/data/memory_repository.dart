@@ -278,6 +278,16 @@ class MemoryRepository implements Repository {
       _programs.where((p) => p.companyId == companyId).toList();
 
   @override
+  Future<void> saveTemplate(TemplateRecord template) async {
+    final index = _templates.indexWhere((item) => item.id == template.id);
+    if (index == -1) {
+      _templates.add(template);
+    } else {
+      _templates[index] = template;
+    }
+  }
+
+  @override
   Future<List<TemplateRecord>> templates(String companyId) async =>
       _templates.where((t) => t.companyId == companyId).toList();
 

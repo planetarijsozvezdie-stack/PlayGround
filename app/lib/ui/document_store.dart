@@ -11,3 +11,6 @@ Future<String?> saveDocumentBytes({
 }) => impl.saveDocumentBytes(fileName: fileName, bytes: bytes);
 
 Future<void> openDocument(String path) => impl.openDocument(path);
+
+Future<Uint8List> readDocumentBytes(String path) =>
+    impl.readDocumentBytes(path);

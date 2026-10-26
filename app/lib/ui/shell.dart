@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,6 +8,7 @@ import '../data/models.dart';
 import '../state/providers.dart';
 import '../theme.dart';
 import 'backup_dialog.dart';
+import 'calendar_dialog.dart';
 import 'dialogs.dart';
 import 'documents_screen.dart';
 import 'home_screen.dart';
@@ -26,6 +29,20 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(() async {
+        final result = await ref
+            .read(calendarServiceProvider)
+            .autoSyncCompany(widget.company.id);
+        if (mounted && result.changed) invalidateBusinessData(ref);
+      }());
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,6 +100,8 @@ class _AppShellState extends ConsumerState<AppShell> {
                         await showBackupDialog(context, ref);
                       } else if (value == 'notifications' && context.mounted) {
                         await showNotificationsDialog(context, ref);
+                      } else if (value == 'calendar' && context.mounted) {
+                        await showCalendarDialog(context, ref);
                       } else if (value == 'switch') {
                         await ref.read(sessionProvider.notifier).clearCompany();
                       } else if (value == 'about' && context.mounted) {
@@ -95,7 +114,8 @@ class _AppShellState extends ConsumerState<AppShell> {
                             SizedBox(height: 12),
                             Text(
                               'Данные хранятся локально на устройстве. '
-                              'Google-интеграции и ИИ-помощник — в следующих версиях.',
+                              'Google Календарь работает в демо-режиме, '
+                              'ИИ-помощник — в следующих версиях.',
                             ),
                           ],
                         );
@@ -113,6 +133,10 @@ class _AppShellState extends ConsumerState<AppShell> {
                       PopupMenuItem(
                         value: 'notifications',
                         child: Text('Напоминания'),
+                      ),
+                      PopupMenuItem(
+                        value: 'calendar',
+                        child: Text('Google Календарь'),
                       ),
                       PopupMenuItem(
                         value: 'switch',

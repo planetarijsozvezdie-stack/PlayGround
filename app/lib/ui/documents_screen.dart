@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:printing/printing.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/contract_pdf.dart';
@@ -10,6 +11,7 @@ import '../data/models.dart';
 import '../state/providers.dart';
 import '../theme.dart';
 import 'document_store.dart';
+import 'pdf_preview.dart';
 
 const _uuid = Uuid();
 
@@ -41,7 +43,7 @@ class DocumentsScreen extends ConsumerWidget {
             child: TabBarView(
               children: [
                 const _ProgramsTab(),
-                const _TemplatesTab(),
+                _TemplatesTab(company: company),
                 _ArchiveTab(company: company),
               ],
             ),
@@ -131,7 +133,9 @@ class _ProgramsTab extends ConsumerWidget {
 }
 
 class _TemplatesTab extends ConsumerWidget {
-  const _TemplatesTab();
+  const _TemplatesTab({required this.company});
+
+  final Company company;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -188,36 +192,181 @@ class _TemplatesTab extends ConsumerWidget {
                   TextButton(
                     onPressed: () => showDialog<void>(
                       context: context,
-                      builder: (context) => AlertDialog(
-                        title: Text(template.name),
-                        content: SizedBox(
-                          width: 560,
-                          height: 420,
-                          child: SingleChildScrollView(
-                            child: SelectableText(
-                              template.body,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                height: 1.5,
-                                color: CosmicColors.text2,
-                              ),
-                            ),
-                          ),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Закрыть'),
-                          ),
-                        ],
+                      builder: (context) => _TemplateEditorDialog(
+                        company: company,
+                        template: template,
                       ),
                     ),
-                    child: const Text('Просмотр'),
+                    child: const Text('Редактировать'),
                   ),
                 ],
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+class _TemplateEditorDialog extends ConsumerStatefulWidget {
+  const _TemplateEditorDialog({required this.company, required this.template});
+
+  final Company company;
+  final TemplateRecord template;
+
+  @override
+  ConsumerState<_TemplateEditorDialog> createState() =>
+      _TemplateEditorDialogState();
+}
+
+class _TemplateEditorDialogState extends ConsumerState<_TemplateEditorDialog> {
+  late final TextEditingController _body;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _body = TextEditingController(text: widget.template.body)
+      ..addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _body.dispose();
+    super.dispose();
+  }
+
+  Event? _previewEvent() {
+    final events = ref.watch(eventsProvider).valueOrNull ?? const <Event>[];
+    final institutions =
+        ref.watch(institutionsProvider).valueOrNull ?? const <Institution>[];
+    final types = {
+      for (final institution in institutions) institution.id: institution.type,
+    };
+    final completed =
+        events
+            .where(
+              (event) =>
+                  event.status == EventStatus.completed &&
+                  types[event.institutionId] == widget.template.type,
+            )
+            .toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
+    return completed.firstOrNull;
+  }
+
+  String _previewText(Event? event) {
+    if (event == null) return _body.text;
+    return fillTemplate(
+      _body.text,
+      company: widget.company,
+      event: event,
+      documentNumber: 'ПРЕДПРОСМОТР',
+      documentDate: event.date,
+    );
+  }
+
+  Future<void> _save() async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _saving = true);
+    try {
+      await ref
+          .read(repositoryProvider)
+          .saveTemplate(
+            TemplateRecord(
+              id: widget.template.id,
+              companyId: widget.template.companyId,
+              type: widget.template.type,
+              name: widget.template.name,
+              body: _body.text,
+            ),
+          );
+      ref.invalidate(templatesProvider);
+      if (!mounted) return;
+      Navigator.pop(context);
+      messenger.showSnackBar(const SnackBar(content: Text('Шаблон сохранён')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить шаблон: $error')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final event = _previewEvent();
+    return AlertDialog(
+      title: Text(widget.template.name),
+      content: SizedBox(
+        width: 560,
+        height: 460,
+        child: DefaultTabController(
+          length: 2,
+          child: Column(
+            children: [
+              const TabBar(
+                labelColor: CosmicColors.text,
+                unselectedLabelColor: CosmicColors.muted,
+                indicatorColor: CosmicColors.accent2,
+                tabs: [
+                  Tab(text: 'Редактор'),
+                  Tab(text: 'Предпросмотр'),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    TextField(
+                      controller: _body,
+                      expands: true,
+                      maxLines: null,
+                      textAlignVertical: TextAlignVertical.top,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        height: 1.45,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: 'Текст шаблона с переменными {{...}}',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.all(8),
+                      child: SelectableText(
+                        _previewText(event),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          height: 1.5,
+                          color: CosmicColors.text2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Сохранить'),
+        ),
       ],
     );
   }
@@ -252,7 +401,7 @@ enum _DocumentSort {
   final String label;
 }
 
-enum _DocumentAction { open, toggleSigned, delete }
+enum _DocumentAction { open, share, toggleSigned, delete }
 
 class _ArchiveTab extends ConsumerStatefulWidget {
   const _ArchiveTab({required this.company});
@@ -266,6 +415,7 @@ class _ArchiveTab extends ConsumerStatefulWidget {
 class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
   final _search = TextEditingController();
   _DocumentSort _sort = _DocumentSort.newest;
+  bool _signedOnly = false;
 
   @override
   void dispose() {
@@ -275,19 +425,22 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
 
   List<DocumentRecord> _visible(List<DocumentRecord> documents) {
     final query = _search.text.trim().toLowerCase();
-    final filtered = query.isEmpty
-        ? [...documents]
-        : documents.where((document) {
-            final created = document.createdAt.toLocal();
-            final date = formatDateRu(created);
-            final numericDate =
-                '${created.day.toString().padLeft(2, '0')}.'
-                '${created.month.toString().padLeft(2, '0')}.${created.year}';
-            return document.title.toLowerCase().contains(query) ||
-                document.number.toLowerCase().contains(query) ||
-                date.toLowerCase().contains(query) ||
-                numericDate.contains(query);
-          }).toList();
+    final filtered =
+        (query.isEmpty
+                ? [...documents]
+                : documents.where((document) {
+                    final created = document.createdAt.toLocal();
+                    final date = formatDateRu(created);
+                    final numericDate =
+                        '${created.day.toString().padLeft(2, '0')}.'
+                        '${created.month.toString().padLeft(2, '0')}.${created.year}';
+                    return document.title.toLowerCase().contains(query) ||
+                        document.number.toLowerCase().contains(query) ||
+                        date.toLowerCase().contains(query) ||
+                        numericDate.contains(query);
+                  }).toList())
+            .where((document) => !_signedOnly || document.signed)
+            .toList();
     filtered.sort(switch (_sort) {
       _DocumentSort.newest => (a, b) => b.createdAt.compareTo(a.createdAt),
       _DocumentSort.oldest => (a, b) => a.createdAt.compareTo(b.createdAt),
@@ -370,6 +523,15 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
               ),
             ),
             const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Только подписанные',
+              onPressed: () => setState(() => _signedOnly = !_signedOnly),
+              icon: Icon(
+                Icons.verified_outlined,
+                size: 20,
+                color: _signedOnly ? CosmicColors.accent2 : CosmicColors.muted,
+              ),
+            ),
             PopupMenuButton<_DocumentSort>(
               tooltip: 'Сортировка',
               initialValue: _sort,
@@ -460,6 +622,11 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
                           child: const Text('Открыть PDF'),
                         ),
                         PopupMenuItem(
+                          value: _DocumentAction.share,
+                          enabled: document.filePath != null,
+                          child: const Text('Поделиться PDF'),
+                        ),
+                        PopupMenuItem(
                           value: _DocumentAction.toggleSigned,
                           child: Text(
                             document.signed
@@ -486,6 +653,8 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
       case _DocumentAction.open:
         final path = document.filePath;
         if (path != null) await _openDocument(context, path);
+      case _DocumentAction.share:
+        await _shareDocument(context, document);
       case _DocumentAction.toggleSigned:
         await _setSigned(document);
       case _DocumentAction.delete:
@@ -589,6 +758,23 @@ class _ArchiveEmpty extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+Future<void> _shareDocument(
+  BuildContext context,
+  DocumentRecord document,
+) async {
+  final path = document.filePath;
+  if (path == null) return;
+  try {
+    final bytes = await readDocumentBytes(path);
+    await Printing.sharePdf(bytes: bytes, filename: '${document.number}.pdf');
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Не удалось поделиться PDF: $error')),
     );
   }
 }
@@ -798,6 +984,16 @@ class _GenerateDocumentDialogState
         ),
       };
       final fileName = '$number.pdf';
+      if (!mounted) return;
+      setState(() => _busy = false);
+      final previewed = await showPdfPreview(
+        context,
+        title: '${widget.kind.title} $number',
+        subtitle: '${event.institutionName} · ${formatDateRu(event.date)}',
+        bytes: bytes,
+        fileName: fileName,
+      );
+      if (!previewed || !mounted) return;
       final path = await saveDocumentBytes(fileName: fileName, bytes: bytes);
       await ref
           .read(repositoryProvider)
