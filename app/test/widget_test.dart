@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planetarium_manager/app.dart';
 import 'package:planetarium_manager/core/company_time.dart';
+import 'package:planetarium_manager/core/email_templates.dart';
 import 'package:planetarium_manager/core/pin.dart';
 import 'package:planetarium_manager/core/ru_format.dart';
 import 'package:planetarium_manager/data/memory_repository.dart';
@@ -455,5 +456,108 @@ void main() {
     await tester.tap(simulate);
     await tester.pumpAndSettle();
     expect(find.textContaining('Удалено из демо-Google:'), findsOneWidget);
+  });
+
+  testWidgets('демо-Диск показывает папку и кнопки выгрузки', (tester) async {
+    await ensureRussianLocale();
+    ensureTimeZones();
+    final repository = await MemoryRepository.create();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repository)],
+        child: const PlanetariumApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Выбрать').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Показать меню'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Google Диск'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Демо-режим'), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Папка: /Планетарий/'), findsOneWidget);
+    expect(find.textContaining('Локальных документов:'), findsOneWidget);
+    final documents = find.widgetWithText(TextButton, 'Документы');
+    expect(tester.widget<TextButton>(documents).onPressed, isNotNull);
+    final backup = find.widgetWithText(TextButton, 'Копия');
+    expect(tester.widget<TextButton>(backup).onPressed, isNull);
+  });
+
+  testWidgets('демо-Таблицы выгружают базу и финансы', (tester) async {
+    await ensureRussianLocale();
+    ensureTimeZones();
+    final repository = await MemoryRepository.create();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repository)],
+        child: const PlanetariumApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Выбрать').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Показать меню'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Google Таблицы'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Демо-режим'), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    final export = find.widgetWithText(TextButton, 'Выгрузить всё');
+    expect(tester.widget<TextButton>(export).onPressed, isNotNull);
+    await tester.tap(export);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Выгружено листов: 2'), findsOneWidget);
+    expect(find.textContaining('Учреждения:'), findsOneWidget);
+    expect(find.textContaining('Выручка:'), findsOneWidget);
+  });
+
+  testWidgets('шаблон письма редактируется и сохраняется', (tester) async {
+    await ensureRussianLocale();
+    ensureTimeZones();
+    final repository = await MemoryRepository.create();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [repositoryProvider.overrideWithValue(repository)],
+        child: const PlanetariumApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Выбрать').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Показать меню'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Шаблон письма'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Тема письма'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).first, 'Индивидуальная тема');
+    await tester.enterText(
+      find.byType(TextField).last,
+      'Текст для {{учреждение}}',
+    );
+    final save = find.widgetWithText(FilledButton, 'Сохранить');
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Шаблон письма сохранён'), findsOneWidget);
+    expect(
+      await repository.setting(emailTemplateSubjectKey('c-lunny'), ''),
+      'Индивидуальная тема',
+    );
+    expect(
+      await repository.setting(emailTemplateBodyKey('c-lunny'), ''),
+      'Текст для {{учреждение}}',
+    );
   });
 }

@@ -303,6 +303,14 @@ class MemoryRepository implements Repository {
   }
 
   @override
+  Future<void> setDocumentDriveFile(String id, String driveFileId) async {
+    final index = _documents.indexWhere((document) => document.id == id);
+    if (index < 0) return;
+    _documents[index] = _documents[index].copyWith(driveFileId: driveFileId);
+    _outbox.add('documents:$id');
+  }
+
+  @override
   Future<void> setDocumentSigned(String id, bool signed) async {
     final index = _documents.indexWhere((document) => document.id == id);
     if (index < 0) return;

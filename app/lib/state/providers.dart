@@ -7,6 +7,8 @@ import '../core/pin.dart';
 import '../core/revenue_analytics.dart';
 import '../services/biometric_service.dart';
 import '../services/calendar_service.dart';
+import '../services/drive_service.dart';
+import '../services/sheets_service.dart';
 import '../data/models.dart';
 import '../data/repository.dart';
 
@@ -22,6 +24,28 @@ final calendarServiceProvider = Provider<CalendarService>(
   (ref) => CalendarService(
     ref.watch(repositoryProvider),
     ref.watch(calendarGatewayProvider),
+  ),
+);
+
+final driveGatewayProvider = Provider<DriveGateway>(
+  (ref) => FakeDriveGateway(),
+);
+
+final driveServiceProvider = Provider<DriveService>(
+  (ref) => DriveService(
+    ref.watch(repositoryProvider),
+    ref.watch(driveGatewayProvider),
+  ),
+);
+
+final sheetsGatewayProvider = Provider<SheetsGateway>(
+  (ref) => FakeSheetsGateway(),
+);
+
+final sheetsServiceProvider = Provider<SheetsService>(
+  (ref) => SheetsService(
+    ref.watch(repositoryProvider),
+    ref.watch(sheetsGatewayProvider),
   ),
 );
 

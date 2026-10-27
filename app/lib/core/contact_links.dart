@@ -1,21 +1,22 @@
 import '../data/models.dart';
+import 'email_templates.dart';
 
 Uri institutionEmailUri({
   required Company company,
   required Institution institution,
+  EmailTemplate? template,
 }) {
-  final subject = 'Планетарий «${company.shortName}» — сотрудничество';
-  final greeting = institution.contactPerson.isEmpty
-      ? 'Здравствуйте!'
-      : 'Здравствуйте, ${institution.contactPerson}!';
-  final body =
-      '$greeting\n\n'
-      'Пишем из планетария «${company.shortName}» (${company.city}). '
-      'Хотим обсудить проведение программы для '
-      '${institution.displayName}.\n\n'
-      'С уважением,\n'
-      '${company.signer}\n'
-      '${company.phone}';
+  final source = template ?? defaultEmailTemplate(company);
+  final subject = fillEmailTemplate(
+    source.subject,
+    company: company,
+    institution: institution,
+  );
+  final body = fillEmailTemplate(
+    source.body,
+    company: company,
+    institution: institution,
+  );
   return Uri(
     scheme: 'mailto',
     path: institution.email,

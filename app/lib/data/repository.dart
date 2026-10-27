@@ -53,6 +53,8 @@ abstract class Repository {
 
   Future<void> addDocument(DocumentRecord value);
 
+  Future<void> setDocumentDriveFile(String id, String driveFileId);
+
   Future<void> setDocumentSigned(String id, bool signed);
 
   Future<void> deleteDocument(String id);

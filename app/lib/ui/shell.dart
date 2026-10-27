@@ -11,12 +11,15 @@ import 'backup_dialog.dart';
 import 'calendar_dialog.dart';
 import 'dialogs.dart';
 import 'documents_screen.dart';
+import 'email_template_dialog.dart';
+import 'drive_dialog.dart';
 import 'home_screen.dart';
 import 'notifications_dialog.dart';
 import 'profile_dialog.dart';
 import 'institutions_screen.dart';
 import 'revenue_screen.dart';
 import 'schedule_screen.dart';
+import 'sheets_dialog.dart';
 
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.company});
@@ -100,8 +103,14 @@ class _AppShellState extends ConsumerState<AppShell> {
                         await showBackupDialog(context, ref);
                       } else if (value == 'notifications' && context.mounted) {
                         await showNotificationsDialog(context, ref);
+                      } else if (value == 'emailTemplate' && context.mounted) {
+                        await showEmailTemplateDialog(context, ref);
                       } else if (value == 'calendar' && context.mounted) {
                         await showCalendarDialog(context, ref);
+                      } else if (value == 'drive' && context.mounted) {
+                        await showDriveDialog(context, ref);
+                      } else if (value == 'sheets' && context.mounted) {
+                        await showSheetsDialog(context, ref);
                       } else if (value == 'switch') {
                         await ref.read(sessionProvider.notifier).clearCompany();
                       } else if (value == 'about' && context.mounted) {
@@ -114,8 +123,8 @@ class _AppShellState extends ConsumerState<AppShell> {
                             SizedBox(height: 12),
                             Text(
                               'Данные хранятся локально на устройстве. '
-                              'Google Календарь работает в демо-режиме, '
-                              'ИИ-помощник — в следующих версиях.',
+                              'Google Календарь, Диск и Таблицы работают '
+                              'в демо-режиме, ИИ-помощник — в следующих версиях.',
                             ),
                           ],
                         );
@@ -135,8 +144,17 @@ class _AppShellState extends ConsumerState<AppShell> {
                         child: Text('Напоминания'),
                       ),
                       PopupMenuItem(
+                        value: 'emailTemplate',
+                        child: Text('Шаблон письма'),
+                      ),
+                      PopupMenuItem(
                         value: 'calendar',
                         child: Text('Google Календарь'),
+                      ),
+                      PopupMenuItem(value: 'drive', child: Text('Google Диск')),
+                      PopupMenuItem(
+                        value: 'sheets',
+                        child: Text('Google Таблицы'),
                       ),
                       PopupMenuItem(
                         value: 'switch',

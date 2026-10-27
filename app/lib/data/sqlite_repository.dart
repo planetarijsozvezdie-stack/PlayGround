@@ -537,6 +537,7 @@ class SqliteRepository implements Repository {
             signedDate: row['signed_date'] == null
                 ? null
                 : DateTime.parse(row['signed_date'] as String),
+            driveFileId: row['drive_file_id'] as String?,
           ),
         )
         .toList();
@@ -555,12 +556,26 @@ class SqliteRepository implements Repository {
         'title': value.title,
         'file_path': value.filePath,
         'size_bytes': value.sizeBytes,
+        'drive_file_id': value.driveFileId,
         'signed': 0,
         'created_at': now,
         'updated_at': now,
         'version': 1,
       });
       await _enqueue(txn, 'documents', value.id, 'upsert');
+    });
+  }
+
+  @override
+  Future<void> setDocumentDriveFile(String id, String driveFileId) async {
+    await _db.transaction((txn) async {
+      final now = _now();
+      await txn.rawUpdate(
+        'UPDATE documents SET drive_file_id = ?, updated_at = ?, '
+        'version = version + 1 WHERE id = ?',
+        [driveFileId, now, id],
+      );
+      await _enqueue(txn, 'documents', id, 'upsert');
     });
   }
 

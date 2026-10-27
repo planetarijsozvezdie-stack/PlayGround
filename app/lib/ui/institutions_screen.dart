@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/contact_links.dart';
+import '../core/email_templates.dart';
 import '../core/export_data.dart';
 import '../core/ru_format.dart';
 import '../data/models.dart';
@@ -479,9 +480,14 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
   }
 
   Future<void> _composeEmail(Institution institution) async {
+    final template = await loadEmailTemplate(
+      ref.read(repositoryProvider),
+      widget.company,
+    );
     final uri = institutionEmailUri(
       company: widget.company,
       institution: institution,
+      template: template,
     );
     try {
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);

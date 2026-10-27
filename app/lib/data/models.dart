@@ -448,6 +448,7 @@ class DocumentRecord {
     required this.createdAt,
     this.signed = false,
     this.signedDate,
+    this.driveFileId,
   });
 
   final String id;
@@ -461,21 +462,26 @@ class DocumentRecord {
   final DateTime createdAt;
   final bool signed;
   final DateTime? signedDate;
+  final String? driveFileId;
 
-  DocumentRecord copyWith({bool? signed, DateTime? signedDate}) =>
-      DocumentRecord(
-        id: id,
-        companyId: companyId,
-        eventId: eventId,
-        type: type,
-        number: number,
-        title: title,
-        filePath: filePath,
-        sizeBytes: sizeBytes,
-        createdAt: createdAt,
-        signed: signed ?? this.signed,
-        signedDate: signedDate ?? this.signedDate,
-      );
+  DocumentRecord copyWith({
+    bool? signed,
+    DateTime? signedDate,
+    String? driveFileId,
+  }) => DocumentRecord(
+    id: id,
+    companyId: companyId,
+    eventId: eventId,
+    type: type,
+    number: number,
+    title: title,
+    filePath: filePath,
+    sizeBytes: sizeBytes,
+    createdAt: createdAt,
+    signed: signed ?? this.signed,
+    signedDate: signedDate ?? this.signedDate,
+    driveFileId: driveFileId ?? this.driveFileId,
+  );
 }
 
 class ChangeEntry {

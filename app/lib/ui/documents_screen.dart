@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -995,22 +997,24 @@ class _GenerateDocumentDialogState
       );
       if (!previewed || !mounted) return;
       final path = await saveDocumentBytes(fileName: fileName, bytes: bytes);
-      await ref
-          .read(repositoryProvider)
-          .addDocument(
-            DocumentRecord(
-              id: _uuid.v4(),
-              companyId: widget.company.id,
-              eventId: event.id,
-              type: widget.kind.dbType,
-              number: number,
-              title:
-                  '${widget.kind.title} · ${event.institutionName} · ${formatDateRu(event.date)}',
-              filePath: path,
-              sizeBytes: bytes.length,
-              createdAt: DateTime.now(),
-            ),
-          );
+      final document = DocumentRecord(
+        id: _uuid.v4(),
+        companyId: widget.company.id,
+        eventId: event.id,
+        type: widget.kind.dbType,
+        number: number,
+        title:
+            '${widget.kind.title} · ${event.institutionName} · ${formatDateRu(event.date)}',
+        filePath: path,
+        sizeBytes: bytes.length,
+        createdAt: DateTime.now(),
+      );
+      await ref.read(repositoryProvider).addDocument(document);
+      unawaited(
+        ref
+            .read(driveServiceProvider)
+            .autoUploadDocument(widget.company, document, bytes),
+      );
       ref.invalidate(documentsProvider);
       ref.invalidate(outboxProvider);
       if (!mounted) return;
