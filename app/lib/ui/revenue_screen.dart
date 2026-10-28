@@ -287,11 +287,7 @@ class RevenueScreen extends ConsumerWidget {
             ),
           )
         else
-          for (final revenue in revenues.take(30))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _RevenueRow(revenue: revenue),
-            ),
+          _RevenueHistory(revenues: revenues),
       ],
     );
   }
@@ -299,6 +295,44 @@ class RevenueScreen extends ConsumerWidget {
   static String _monthShort(DateTime month) {
     final name = formatMonthYearRu(month).split(' ').first;
     return name.length >= 3 ? name.substring(0, 3) : name;
+  }
+}
+
+class _RevenueHistory extends StatefulWidget {
+  const _RevenueHistory({required this.revenues});
+
+  final List<Revenue> revenues;
+
+  @override
+  State<_RevenueHistory> createState() => _RevenueHistoryState();
+}
+
+class _RevenueHistoryState extends State<_RevenueHistory> {
+  static const int _pageSize = 30;
+  int _visibleCount = _pageSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = widget.revenues.take(_visibleCount).toList();
+    final hasMore = widget.revenues.length > shown.length;
+    return Column(
+      children: [
+        for (final revenue in shown)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _RevenueRow(revenue: revenue),
+          ),
+        if (hasMore)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: OutlinedButton.icon(
+              onPressed: () => setState(() => _visibleCount += _pageSize),
+              icon: const Icon(Icons.expand_more),
+              label: const Text('Показать ещё 30'),
+            ),
+          ),
+      ],
+    );
   }
 }
 

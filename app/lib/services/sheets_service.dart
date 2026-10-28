@@ -1,4 +1,6 @@
 import '../core/export_data.dart';
+import '../core/import_data.dart';
+import '../core/tax.dart';
 import '../data/models.dart';
 import '../data/repository.dart';
 
@@ -27,6 +29,11 @@ abstract class SheetsGateway {
   });
 
   Future<List<SheetInfo>> sheets(String spreadsheetId);
+
+  Future<List<List<String>>> readSheet({
+    required String spreadsheetId,
+    required String sheetName,
+  });
 }
 
 class FakeSheetsGateway implements SheetsGateway {
@@ -69,6 +76,17 @@ class FakeSheetsGateway implements SheetsGateway {
         ),
     ];
   }
+
+  @override
+  Future<List<List<String>>> readSheet({
+    required String spreadsheetId,
+    required String sheetName,
+  }) async {
+    return [
+      for (final row in _spreadsheets[spreadsheetId]?[sheetName] ?? const [])
+        List<String>.from(row),
+    ];
+  }
 }
 
 class SheetsService {
@@ -101,6 +119,78 @@ class SheetsService {
     final id = await spreadsheetId();
     if (id == null) return const [];
     return _gateway.sheets(id);
+  }
+
+  Future<ImportTable?> readInstitutions(Company company) async {
+    final id = await spreadsheetId();
+    if (id == null) return null;
+    final data = await _gateway.readSheet(
+      spreadsheetId: id,
+      sheetName: institutionsTable(const []).sheetName,
+    );
+    if (data.isEmpty) return null;
+    return ImportTable(
+      headers: List<String>.from(data.first),
+      rows: [for (final row in data.skip(1)) List<String>.from(row)],
+    );
+  }
+
+  Future<int> appendDemoInstitution(Company company) async {
+    final id = await spreadsheetId();
+    if (id == null) return 0;
+    const sheetName = 'Учреждения';
+    final data = await _gateway.readSheet(
+      spreadsheetId: id,
+      sheetName: sheetName,
+    );
+    final headers = data.isEmpty
+        ? institutionsTable(const []).headers
+        : List<String>.from(data.first);
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final demo = Institution(
+      id: 'demo-import-$stamp',
+      companyId: company.id,
+      type: InstitutionType.school,
+      number: 'Д${stamp % 100000}',
+      name: 'Демо-учреждение',
+      city: company.city,
+      district: 'Демо-район',
+      address: 'ул. Импортная, 1',
+      contactPerson: 'Марина Демидова',
+      position: 'Завуч',
+      phonePrimary: '+7 900 000-00-00',
+      phoneSecondary: '',
+      email: 'demo@example.com',
+      website: '',
+      groupsCount: null,
+      hallCapacity: null,
+      notes: 'Добавлено в таблицу для проверки импорта',
+      lastVisitDate: null,
+      totalVisits: 0,
+      status: InstitutionStatus.active,
+      tags: const ['демо', 'импорт'],
+      counterparty: CounterpartyType.legal,
+      externalId: '',
+    );
+    final template = institutionsTable([demo]);
+    String valueFor(String header) {
+      final index = template.headers.indexOf(header);
+      return index < 0 ? '' : template.rows.first[index];
+    }
+
+    final demoRow = [for (final header in headers) valueFor(header)];
+    final rows = [
+      for (final row in data.skip(data.isEmpty ? 0 : 1)) List<String>.from(row),
+      demoRow,
+    ];
+    await _gateway.writeSheet(
+      spreadsheetId: id,
+      sheetName: sheetName,
+      headers: headers,
+      rows: rows,
+    );
+    await _touch();
+    return rows.length;
   }
 
   Future<SheetInfo?> exportInstitutions(Company company) async {

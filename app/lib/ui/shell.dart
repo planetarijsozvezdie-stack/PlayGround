@@ -20,6 +20,7 @@ import 'institutions_screen.dart';
 import 'revenue_screen.dart';
 import 'schedule_screen.dart';
 import 'sheets_dialog.dart';
+import 'trash_dialog.dart';
 
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.company});
@@ -111,6 +112,8 @@ class _AppShellState extends ConsumerState<AppShell> {
                         await showDriveDialog(context, ref);
                       } else if (value == 'sheets' && context.mounted) {
                         await showSheetsDialog(context, ref);
+                      } else if (value == 'trash' && context.mounted) {
+                        await showTrashDialog(context, ref, widget.company.id);
                       } else if (value == 'switch') {
                         await ref.read(sessionProvider.notifier).clearCompany();
                       } else if (value == 'about' && context.mounted) {
@@ -156,6 +159,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                         value: 'sheets',
                         child: Text('Google Таблицы'),
                       ),
+                      PopupMenuItem(value: 'trash', child: Text('Корзина')),
                       PopupMenuItem(
                         value: 'switch',
                         child: Text('Сменить планетарий'),

@@ -497,3 +497,29 @@ class ChangeEntry {
   final String newValue;
   final DateTime changedAt;
 }
+
+enum TrashKind {
+  institution('Учреждение'),
+  event('Мероприятие'),
+  document('Документ');
+
+  const TrashKind(this.label);
+
+  final String label;
+}
+
+class TrashEntry {
+  const TrashEntry({
+    required this.id,
+    required this.kind,
+    required this.title,
+    required this.subtitle,
+    required this.deletedAt,
+  });
+
+  final String id;
+  final TrashKind kind;
+  final String title;
+  final String subtitle;
+  final DateTime deletedAt;
+}

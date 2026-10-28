@@ -46,7 +46,9 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
   bool _selecting = false;
   bool _table = false;
   final Set<String> _selected = {};
-  final Set<String> _hidden = {};
+  static const int _pageSize = 50;
+  int _visibleCount = _pageSize;
+  String _filterSignature = '';
 
   @override
   void dispose() {
@@ -57,9 +59,7 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
   @override
   Widget build(BuildContext context) {
     final all =
-        (ref.watch(institutionsProvider).valueOrNull ?? const <Institution>[])
-            .where((i) => !_hidden.contains(i.id))
-            .toList();
+        ref.watch(institutionsProvider).valueOrNull ?? const <Institution>[];
     final query = _search.text.trim().toLowerCase();
     final cities =
         all.map((i) => i.city).where((city) => city.isNotEmpty).toSet().toList()
@@ -100,6 +100,21 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
         return visits == 0 ? a.name.compareTo(b.name) : visits;
       },
     });
+    final signature = [
+      query,
+      _type?.name,
+      _status?.name,
+      _city,
+      _district,
+      _tag,
+      _sort.name,
+    ].join('|');
+    if (signature != _filterSignature) {
+      _filterSignature = signature;
+      _visibleCount = _pageSize;
+    }
+    final visible = filtered.take(_visibleCount).toList();
+    final hasMore = filtered.length > visible.length;
 
     return Column(
       children: [
@@ -200,7 +215,9 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
               Row(
                 children: [
                   Text(
-                    'Найдено: ${filtered.length}',
+                    hasMore
+                        ? 'Найдено: ${filtered.length} · показано ${visible.length}'
+                        : 'Найдено: ${filtered.length}',
                     style: const TextStyle(
                       fontSize: 12,
                       color: CosmicColors.muted,
@@ -311,9 +328,15 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
                     Expanded(
                       child: ListView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
-                        itemCount: filtered.length,
+                        itemCount: visible.length + (hasMore ? 1 : 0),
                         itemBuilder: (context, index) {
-                          final institution = filtered[index];
+                          if (index >= visible.length) {
+                            return _LoadMoreTile(
+                              onTap: () =>
+                                  setState(() => _visibleCount += _pageSize),
+                            );
+                          }
+                          final institution = visible[index];
                           return _InstitutionTableRow(
                             institution: institution,
                             selecting: _selecting,
@@ -328,9 +351,14 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
-                  itemCount: filtered.length,
+                  itemCount: visible.length + (hasMore ? 1 : 0),
                   itemBuilder: (context, index) {
-                    final institution = filtered[index];
+                    if (index >= visible.length) {
+                      return _LoadMoreTile(
+                        onTap: () => setState(() => _visibleCount += _pageSize),
+                      );
+                    }
+                    final institution = visible[index];
                     return _InstitutionCard(
                       institution: institution,
                       selecting: _selecting,
@@ -501,8 +529,6 @@ class _InstitutionsScreenState extends ConsumerState<InstitutionsScreen> {
   }
 
   Future<void> _forceDelete(Institution institution) async {
-    _hidden.add(institution.id);
-    setState(() {});
     await ref.read(repositoryProvider).deleteInstitution(institution.id);
     invalidateBusinessData(ref);
   }
@@ -977,6 +1003,26 @@ class _InstitutionTableRow extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadMoreTile extends StatelessWidget {
+  const _LoadMoreTile({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: OutlinedButton.icon(
+          onPressed: onTap,
+          icon: const Icon(Icons.expand_more),
+          label: const Text('Показать ещё 50'),
         ),
       ),
     );

@@ -5,6 +5,7 @@ import '../core/ru_format.dart';
 import '../services/sheets_service.dart';
 import '../state/providers.dart';
 import '../theme.dart';
+import 'import_institutions.dart';
 
 Future<void> showSheetsDialog(BuildContext context, WidgetRef ref) {
   return showDialog<void>(
@@ -90,6 +91,74 @@ class _SheetsDialogState extends ConsumerState<_SheetsDialog> {
       setState(() {
         _busy = false;
         _message = 'Не удалось выгрузить: $error';
+      });
+    }
+  }
+
+  Future<void> _importFromSheet() async {
+    final company = ref.read(sessionProvider).company;
+    if (company == null) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final service = ref.read(sheetsServiceProvider);
+      final table = await service.readInstitutions(company);
+      if (!mounted) return;
+      setState(() => _busy = false);
+      if (table == null || table.headers.isEmpty) {
+        setState(() => _message = 'Сначала выгрузите учреждения в таблицу');
+        return;
+      }
+      await showInstitutionTableImport(
+        context,
+        company: company,
+        table: table,
+        sourceLabel: 'Google Таблицы · Учреждения',
+      );
+      if (!mounted) return;
+      final sheets = await service.status(company);
+      final lastSync = await service.lastSyncAt();
+      if (!mounted) return;
+      setState(() {
+        _sheets = sheets;
+        _lastSync = lastSync;
+        _message = 'Импорт из таблицы завершён';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _message = 'Не удалось прочитать таблицу: $error';
+      });
+    }
+  }
+
+  Future<void> _appendDemoRow() async {
+    final company = ref.read(sessionProvider).company;
+    if (company == null) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final service = ref.read(sheetsServiceProvider);
+      final rows = await service.appendDemoInstitution(company);
+      final sheets = await service.status(company);
+      final lastSync = await service.lastSyncAt();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _sheets = sheets;
+        _lastSync = lastSync;
+        _message = 'В таблицу добавлена демо-строка (всего $rows)';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _message = 'Не удалось изменить таблицу: $error';
       });
     }
   }
@@ -180,6 +249,29 @@ class _SheetsDialogState extends ConsumerState<_SheetsDialog> {
                             ),
                           ),
                       ],
+                    ],
+                    if (company != null) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _busy || _spreadsheetId == null
+                                ? null
+                                : _importFromSheet,
+                            icon: const Icon(Icons.download_outlined, size: 18),
+                            label: const Text('Импорт из таблицы'),
+                          ),
+                          TextButton.icon(
+                            onPressed: _busy || _spreadsheetId == null
+                                ? null
+                                : _appendDemoRow,
+                            icon: const Icon(Icons.add_box_outlined, size: 18),
+                            label: const Text('Демо: добавить строку'),
+                          ),
+                        ],
+                      ),
                     ],
                     if (_message != null) ...[
                       const SizedBox(height: 10),

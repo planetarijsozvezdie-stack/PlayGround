@@ -51,6 +51,39 @@ void main() {
     expect(result.drafts.first.name, bundle.institutions.first.name);
   });
 
+  test('без номера дубликат определяется по названию и городу', () {
+    expect(
+      institutionDedupeKey(
+        type: InstitutionType.other,
+        number: '',
+        city: 'Уфа',
+        name: 'Центр «Млечный путь»',
+      ),
+      institutionDedupeKey(
+        type: InstitutionType.other,
+        number: '',
+        city: 'уфа',
+        name: 'центр млечный путь',
+      ),
+    );
+    expect(
+      institutionDedupeKey(
+        type: InstitutionType.school,
+        number: '',
+        city: 'Уфа',
+        name: 'Школа',
+      ),
+      isNot(
+        institutionDedupeKey(
+          type: InstitutionType.other,
+          number: '',
+          city: 'Уфа',
+          name: 'Школа',
+        ),
+      ),
+    );
+  });
+
   test('ключ дубликата нормализует номер и город', () {
     expect(
       institutionDedupeKey(

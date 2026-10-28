@@ -1,16 +1,12 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 
 import '../core/import_data.dart';
 import '../data/models.dart';
+import '../services/institution_import_service.dart';
 import '../state/providers.dart';
 import '../theme.dart';
-
-const _uuid = Uuid();
-
-enum ImportDuplicatePolicy { skip, update, create }
 
 Future<void> showInstitutionImport(
   BuildContext context,
@@ -53,29 +49,47 @@ Future<void> showInstitutionImport(
     return;
   }
   if (!context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    builder: (_) =>
-        _ImportDialog(company: company, table: table, fileName: file.name),
+  await showInstitutionTableImport(
+    context,
+    company: company,
+    table: table,
+    sourceLabel: file.name,
   );
 }
 
-class _ImportDialog extends ConsumerStatefulWidget {
-  const _ImportDialog({
+Future<void> showInstitutionTableImport(
+  BuildContext context, {
+  required Company company,
+  required ImportTable table,
+  required String sourceLabel,
+}) {
+  return showDialog<void>(
+    context: context,
+    builder: (_) => ImportInstitutionsDialog(
+      company: company,
+      table: table,
+      sourceLabel: sourceLabel,
+    ),
+  );
+}
+
+class ImportInstitutionsDialog extends ConsumerStatefulWidget {
+  const ImportInstitutionsDialog({
     required this.company,
     required this.table,
-    required this.fileName,
+    required this.sourceLabel,
+    super.key,
   });
 
   final Company company;
   final ImportTable table;
-  final String fileName;
+  final String sourceLabel;
 
   @override
-  ConsumerState<_ImportDialog> createState() => _ImportDialogState();
+  ConsumerState<ImportInstitutionsDialog> createState() => _ImportDialogState();
 }
 
-class _ImportDialogState extends ConsumerState<_ImportDialog> {
+class _ImportDialogState extends ConsumerState<ImportInstitutionsDialog> {
   late Map<String, int> _mapping;
   ImportDuplicatePolicy _policy = ImportDuplicatePolicy.skip;
   bool _busy = false;
@@ -89,6 +103,43 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
   @override
   Widget build(BuildContext context) {
     final parsed = parseInstitutions(widget.table, _mapping);
+    final existing =
+        ref.watch(institutionsProvider).valueOrNull ?? const <Institution>[];
+    final service = InstitutionImportService(ref.watch(repositoryProvider));
+    final preview = service.preview(
+      existing: existing,
+      parsed: parsed,
+      policy: _policy,
+    );
+    final existingKeys = <String>{};
+    for (final institution in existing) {
+      final key = institutionDedupeKey(
+        type: institution.type,
+        number: institution.number,
+        city: institution.city,
+        name: institution.name,
+      );
+      if (key.isNotEmpty) existingKeys.add(key);
+    }
+    String actionFor(InstitutionDraft draft) {
+      final exists = existingKeys.contains(draft.dedupeKey);
+      if (!exists) return 'новое';
+      return switch (_policy) {
+        ImportDuplicatePolicy.skip => 'пропуск',
+        ImportDuplicatePolicy.update => 'обновление',
+        ImportDuplicatePolicy.create => 'дубль',
+      };
+    }
+
+    int rankFor(InstitutionDraft draft) => switch (actionFor(draft)) {
+      'новое' => 0,
+      'обновление' => 1,
+      'дубль' => 2,
+      _ => 3,
+    };
+    final previewDrafts = [...parsed.drafts]
+      ..sort((a, b) => rankFor(a).compareTo(rankFor(b)));
+
     return AlertDialog(
       title: const Text('Импорт учреждений'),
       content: SizedBox(
@@ -99,7 +150,7 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '${widget.fileName} · ${widget.table.rows.length} строк',
+                '${widget.sourceLabel} · ${widget.table.rows.length} строк',
                 style: const TextStyle(fontSize: 11, color: CosmicColors.muted),
               ),
               const SizedBox(height: 12),
@@ -149,8 +200,9 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
                 ),
               const SizedBox(height: 8),
               Text(
-                'Готово к импорту: ${parsed.drafts.length} · '
-                'ошибок: ${parsed.errors.length}',
+                'Дифф: новых ${preview.created} · обновлений '
+                '${preview.updated} · пропусков ${preview.skipped} · '
+                'ошибок ${preview.errors}',
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -173,12 +225,13 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 6),
-              for (final draft in parsed.drafts.take(3))
+              for (final draft in previewDrafts.take(6))
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
                     '${draft.name} · ${draft.type.label} · '
-                    '${draft.city}${draft.number.isEmpty ? '' : ' №${draft.number}'}',
+                    '${draft.city}${draft.number.isEmpty ? '' : ' №${draft.number}'}'
+                    ' — ${actionFor(draft)}',
                     style: const TextStyle(
                       fontSize: 11,
                       color: CosmicColors.text2,
@@ -233,97 +286,24 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
 
   Future<void> _import(ImportParseResult parsed) async {
     setState(() => _busy = true);
-    final repository = ref.read(repositoryProvider);
+    final service = InstitutionImportService(ref.read(repositoryProvider));
     final existing =
         ref.read(institutionsProvider).valueOrNull ?? const <Institution>[];
-    final byKey = <String, Institution>{};
-    for (final institution in existing) {
-      final key = institutionDedupeKey(
-        type: institution.type,
-        number: institution.number,
-        city: institution.city,
-      );
-      if (key.isNotEmpty) byKey[key] = institution;
-    }
-    var created = 0;
-    var updated = 0;
-    var skipped = 0;
     try {
-      for (final draft in parsed.drafts) {
-        final current = byKey[draft.dedupeKey];
-        if (current != null) {
-          if (_policy == ImportDuplicatePolicy.skip) {
-            skipped++;
-            continue;
-          }
-          if (_policy == ImportDuplicatePolicy.update) {
-            await repository.saveInstitution(
-              current.copyWith(
-                type: draft.type,
-                number: draft.number,
-                name: draft.name,
-                city: draft.city,
-                district: draft.district.isEmpty
-                    ? current.district
-                    : draft.district,
-                address: draft.address.isEmpty
-                    ? current.address
-                    : draft.address,
-                contactPerson: draft.contactPerson.isEmpty
-                    ? current.contactPerson
-                    : draft.contactPerson,
-                phonePrimary: draft.phonePrimary.isEmpty
-                    ? current.phonePrimary
-                    : draft.phonePrimary,
-                email: draft.email.isEmpty ? current.email : draft.email,
-                notes: draft.notes.isEmpty ? current.notes : draft.notes,
-                status: draft.status,
-                counterparty: draft.counterparty,
-                tags: draft.tags.isEmpty ? current.tags : draft.tags,
-              ),
-            );
-            updated++;
-            continue;
-          }
-        }
-        await repository.saveInstitution(
-          Institution(
-            id: _uuid.v4(),
-            companyId: widget.company.id,
-            type: draft.type,
-            number: draft.number,
-            name: draft.name,
-            city: draft.city,
-            district: draft.district,
-            address: draft.address,
-            contactPerson: draft.contactPerson,
-            position: '',
-            phonePrimary: draft.phonePrimary,
-            phoneSecondary: '',
-            email: draft.email,
-            website: '',
-            groupsCount: null,
-            hallCapacity: null,
-            notes: draft.notes,
-            lastVisitDate: null,
-            totalVisits: 0,
-            status: draft.status,
-            tags: draft.tags,
-            counterparty: draft.counterparty,
-            externalId: '',
-          ),
-        );
-        created++;
-      }
+      final result = await service.apply(
+        company: widget.company,
+        existing: existing,
+        parsed: parsed,
+        policy: _policy,
+      );
       invalidateBusinessData(ref);
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Импорт завершён: создано $created, обновлено $updated, '
-            'пропущено $skipped'
-            '${parsed.errors.isEmpty ? '' : ', ошибок ${parsed.errors.length}'}',
+            'Импорт завершён: ${result.summary}'
+            '${result.errors == 0 ? '' : ', ошибок ${result.errors}'}',
           ),
         ),
       );

@@ -349,6 +349,102 @@ void main() {
     );
   });
 
+  test('in-memory корзина и сброс компании', () async {
+    final memory = await MemoryRepository.create();
+    final institution = (await memory.institutions('c-lunny')).first;
+    await memory.deleteInstitution(institution.id);
+    expect(
+      (await memory.trash('c-lunny'))
+          .any((entry) => entry.kind == TrashKind.institution),
+      isTrue,
+    );
+    await memory.restoreTrash(TrashKind.institution, institution.id);
+    expect(
+      (await memory.institutions('c-lunny')).any((i) => i.id == institution.id),
+      isTrue,
+    );
+    await memory.deleteInstitution(institution.id);
+    expect(await memory.purgeTrash('c-lunny'), 1);
+    await memory.resetCompanyData('c-lunny');
+    expect(await memory.institutions('c-lunny'), isEmpty);
+    expect(await memory.revenues('c-lunny'), isEmpty);
+    expect((await memory.companies()).any((c) => c.id == 'c-lunny'), isTrue);
+    expect(await memory.institutions('c-sozvezdie'), isNotEmpty);
+  });
+
+  test('корзина восстанавливает учреждения и документы', () async {
+    final institution = (await repository.institutions('c-lunny')).first;
+    await repository.deleteInstitution(institution.id);
+    final document = DocumentRecord(
+      id: 'd-trash',
+      companyId: 'c-lunny',
+      eventId: null,
+      type: 'act',
+      number: 'TR-1',
+      title: 'Документ в корзине',
+      filePath: null,
+      sizeBytes: null,
+      createdAt: DateTime.utc(2026, 10, 28),
+    );
+    await repository.addDocument(document);
+    await repository.deleteDocument(document.id);
+
+    final entries = await repository.trash('c-lunny');
+    expect(entries.any((e) => e.kind == TrashKind.institution), isTrue);
+    expect(entries.any((e) => e.kind == TrashKind.document), isTrue);
+    expect(
+      (await repository.institutions('c-lunny'))
+          .any((i) => i.id == institution.id),
+      isFalse,
+    );
+
+    await repository.restoreTrash(TrashKind.institution, institution.id);
+    await repository.restoreTrash(TrashKind.document, document.id);
+    expect(
+      (await repository.institutions('c-lunny'))
+          .any((i) => i.id == institution.id),
+      isTrue,
+    );
+    expect(
+      (await repository.documents('c-lunny')).any((d) => d.id == document.id),
+      isTrue,
+    );
+    expect(await repository.trash('c-lunny'), isEmpty);
+  });
+
+  test('очистка корзины удаляет записи физически', () async {
+    final institution = (await repository.institutions('c-lunny')).first;
+    await repository.deleteInstitution(institution.id);
+    expect(await repository.purgeTrash('c-lunny'), 1);
+    expect(await repository.trash('c-lunny'), isEmpty);
+    expect(
+      (await repository.institutions('c-lunny'))
+          .any((i) => i.id == institution.id),
+      isFalse,
+    );
+    await repository.restoreTrash(TrashKind.institution, institution.id);
+    expect(
+      (await repository.institutions('c-lunny'))
+          .any((i) => i.id == institution.id),
+      isFalse,
+    );
+  });
+
+  test('сброс компании очищает данные, но сохраняет компанию', () async {
+    await repository.resetCompanyData('c-lunny');
+    expect(await repository.institutions('c-lunny'), isEmpty);
+    expect(await repository.events('c-lunny'), isEmpty);
+    expect(await repository.revenues('c-lunny'), isEmpty);
+    expect(await repository.documents('c-lunny'), isEmpty);
+    expect(await repository.programs('c-lunny'), isEmpty);
+    expect(await repository.templates('c-lunny'), isEmpty);
+    expect(
+      (await repository.companies()).any((c) => c.id == 'c-lunny'),
+      isTrue,
+    );
+    expect(await repository.institutions('c-sozvezdie'), isNotEmpty);
+  });
+
   test('шаблон договора сохраняется', () async {
     final original = (await repository.templates('c-lunny')).first;
     await repository.saveTemplate(

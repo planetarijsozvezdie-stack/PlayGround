@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
@@ -325,12 +326,232 @@ class SqliteRepository implements Repository {
   @override
   Future<void> restoreEvent(String id) async {
     await _db.transaction((txn) async {
+      final event = await _eventById(txn, id);
+      if (event == null) return;
       final now = _now();
       await txn.rawUpdate(
         'UPDATE events SET deleted_at = NULL, updated_at = ?, version = version + 1 WHERE id = ?',
         [now, id],
       );
+      if (event.status == EventStatus.completed) {
+        await _createAutoRevenue(txn, event);
+        await _adjustInstitutionVisits(txn, event, 1);
+      }
       await _enqueue(txn, 'events', id, 'upsert');
+    });
+  }
+
+  @override
+  Future<List<TrashEntry>> trash(String companyId) async {
+    final institutions = await _db.query(
+      'institutions',
+      where: 'company_id = ? AND deleted_at IS NOT NULL',
+      whereArgs: [companyId],
+    );
+    final events = await _db.query(
+      'events',
+      where: 'company_id = ? AND deleted_at IS NOT NULL',
+      whereArgs: [companyId],
+    );
+    final documents = await _db.query(
+      'documents',
+      where: 'company_id = ? AND deleted_at IS NOT NULL',
+      whereArgs: [companyId],
+    );
+    final result = <TrashEntry>[
+      for (final row in institutions)
+        TrashEntry(
+          id: row['id'] as String,
+          kind: TrashKind.institution,
+          title: _institutionFromRow(row).displayName,
+          subtitle: _institutionFromRow(row).city,
+          deletedAt: DateTime.parse(row['deleted_at'] as String),
+        ),
+      for (final row in events)
+        TrashEntry(
+          id: row['id'] as String,
+          kind: TrashKind.event,
+          title: _eventFromRow(row).institutionName,
+          subtitle: _eventFromRow(row).programName,
+          deletedAt: DateTime.parse(row['deleted_at'] as String),
+        ),
+      for (final row in documents)
+        TrashEntry(
+          id: row['id'] as String,
+          kind: TrashKind.document,
+          title: row['title'] as String,
+          subtitle: row['document_number'] as String,
+          deletedAt: DateTime.parse(row['deleted_at'] as String),
+        ),
+    ]..sort((a, b) => b.deletedAt.compareTo(a.deletedAt));
+    return result;
+  }
+
+  @override
+  Future<void> restoreTrash(TrashKind kind, String id) async {
+    switch (kind) {
+      case TrashKind.institution:
+        await _db.transaction((txn) async {
+          final now = _now();
+          await txn.rawUpdate(
+            'UPDATE institutions SET deleted_at = NULL, updated_at = ?, '
+            'version = version + 1 WHERE id = ?',
+            [now, id],
+          );
+          await _enqueue(txn, 'institutions', id, 'upsert');
+        });
+      case TrashKind.event:
+        await restoreEvent(id);
+      case TrashKind.document:
+        await _db.transaction((txn) async {
+          final now = _now();
+          await txn.rawUpdate(
+            'UPDATE documents SET deleted_at = NULL, updated_at = ?, '
+            'version = version + 1 WHERE id = ?',
+            [now, id],
+          );
+          await _enqueue(txn, 'documents', id, 'upsert');
+        });
+    }
+  }
+
+  @override
+  Future<int> purgeTrash(String companyId) async {
+    return _db.transaction((txn) async {
+      final institutions = await _companyIds(
+        txn,
+        'institutions',
+        companyId,
+        deletedOnly: true,
+      );
+      final events = await _companyIds(
+        txn,
+        'events',
+        companyId,
+        deletedOnly: true,
+      );
+      final documents = await _companyIds(
+        txn,
+        'documents',
+        companyId,
+        deletedOnly: true,
+      );
+
+      if (institutions.isNotEmpty) {
+        await _setNull(txn, 'events', 'institution_id', institutions);
+        await _setNull(txn, 'tasks', 'institution_id', institutions);
+        await _deleteIn(txn, 'interactions', 'institution_id', institutions);
+        await _deleteIn(
+          txn,
+          'mailing_recipients',
+          'institution_id',
+          institutions,
+        );
+        await _deleteIn(txn, 'institutions', 'id', institutions);
+      }
+      if (events.isNotEmpty) {
+        await _deleteIn(txn, 'revenues', 'event_id', events);
+        await _deleteIn(txn, 'tasks', 'event_id', events);
+        await _deleteIn(txn, 'interactions', 'event_id', events);
+        await _setNull(txn, 'documents', 'event_id', events);
+        await _deleteIn(txn, 'events', 'id', events);
+        final rows = await txn.rawQuery(
+          'SELECT COALESCE(SUM(tax_deduction_kopecks), 0) AS used FROM revenues '
+          'WHERE company_id = ? AND deleted_at IS NULL AND is_reversed = 0',
+          [companyId],
+        );
+        await _setDeductionUsed(txn, companyId, rows.first['used'] as int);
+      }
+      if (documents.isNotEmpty) {
+        await _deleteIn(
+          txn,
+          'attachments',
+          'entity_id',
+          documents,
+          extraWhere: "entity_table = 'documents'",
+        );
+        await _deleteIn(txn, 'documents', 'id', documents);
+      }
+
+      for (final id in institutions) {
+        await _enqueue(txn, 'institutions', id, 'delete');
+      }
+      for (final id in events) {
+        await _enqueue(txn, 'events', id, 'delete');
+      }
+      for (final id in documents) {
+        await _enqueue(txn, 'documents', id, 'delete');
+      }
+      return institutions.length + events.length + documents.length;
+    });
+  }
+
+  @override
+  Future<void> resetCompanyData(String companyId) async {
+    await _db.transaction((txn) async {
+      final allIds = <String>[];
+      for (final table in [
+        'institutions',
+        'events',
+        'documents',
+        'revenues',
+        'programs',
+        'contract_templates',
+        'mailing_templates',
+        'mailings',
+        'attachments',
+        'tasks',
+        'interactions',
+      ]) {
+        allIds.addAll(await _companyIds(txn, table, companyId));
+      }
+      await txn.rawDelete(
+        'DELETE FROM mailing_recipients WHERE mailing_id IN '
+        '(SELECT id FROM mailings WHERE company_id = ?) '
+        'OR institution_id IN (SELECT id FROM institutions WHERE company_id = ?)',
+        [companyId, companyId],
+      );
+      for (final table in [
+        'mailings',
+        'mailing_templates',
+        'attachments',
+        'tasks',
+        'interactions',
+        'documents',
+        'revenues',
+        'events',
+        'institutions',
+        'programs',
+        'contract_templates',
+      ]) {
+        await txn.delete(
+          table,
+          where: 'company_id = ?',
+          whereArgs: [companyId],
+        );
+      }
+      await txn.delete(
+        'tax_state',
+        where: 'company_id = ?',
+        whereArgs: [companyId],
+      );
+      await txn.delete(
+        'doc_counters',
+        where: 'company_id = ?',
+        whereArgs: [companyId],
+      );
+      for (var i = 0; i < allIds.length; i += 400) {
+        final chunk = allIds.sublist(i, min(i + 400, allIds.length));
+        final marks = List.filled(chunk.length, '?').join(',');
+        await txn.rawDelete(
+          'DELETE FROM change_log WHERE record_id IN ($marks)',
+          chunk,
+        );
+        await txn.rawDelete(
+          'DELETE FROM outbox WHERE entity_id IN ($marks)',
+          chunk,
+        );
+      }
     });
   }
 
@@ -1001,6 +1222,57 @@ class SqliteRepository implements Repository {
       'updated_at = ? WHERE id = ?',
       [delta, delta, isoDate(event.date), _now(), event.institutionId],
     );
+  }
+
+  Future<List<String>> _companyIds(
+    DatabaseExecutor db,
+    String table,
+    String companyId, {
+    bool deletedOnly = false,
+  }) async {
+    final rows = await db.query(
+      table,
+      columns: ['id'],
+      where: deletedOnly
+          ? 'company_id = ? AND deleted_at IS NOT NULL'
+          : 'company_id = ?',
+      whereArgs: [companyId],
+    );
+    return rows.map((row) => row['id'] as String).toList();
+  }
+
+  Future<void> _deleteIn(
+    DatabaseExecutor db,
+    String table,
+    String column,
+    List<String> ids, {
+    String? extraWhere,
+  }) async {
+    for (var i = 0; i < ids.length; i += 400) {
+      final chunk = ids.sublist(i, min(i + 400, ids.length));
+      final marks = List.filled(chunk.length, '?').join(',');
+      await db.rawDelete(
+        'DELETE FROM $table WHERE $column IN ($marks)'
+        '${extraWhere == null ? '' : ' AND $extraWhere'}',
+        chunk,
+      );
+    }
+  }
+
+  Future<void> _setNull(
+    DatabaseExecutor db,
+    String table,
+    String column,
+    List<String> ids,
+  ) async {
+    for (var i = 0; i < ids.length; i += 400) {
+      final chunk = ids.sublist(i, min(i + 400, ids.length));
+      final marks = List.filled(chunk.length, '?').join(',');
+      await db.rawUpdate(
+        'UPDATE $table SET $column = NULL WHERE $column IN ($marks)',
+        chunk,
+      );
+    }
   }
 
   Future<void> _log(

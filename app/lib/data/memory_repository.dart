@@ -32,6 +32,8 @@ class MemoryRepository implements Repository {
   final Map<String, String> _settings = {};
   final List<String> _outbox = [];
   final Map<String, String> _deletedEvents = {};
+  final Map<String, String> _deletedInstitutions = {};
+  final Map<String, String> _deletedDocuments = {};
   String? _selectedCompanyId;
 
   @override
@@ -66,17 +68,16 @@ class MemoryRepository implements Repository {
               (i) =>
                   i.companyId == companyId &&
                   (type == null || i.type == type) &&
-                  !_institutionsDeleted.contains(i.id),
+                  !_deletedInstitutions.containsKey(i.id),
             )
             .toList()
           ..sort((a, b) => a.name.compareTo(b.name));
     return result;
   }
 
-  final Set<String> _institutionsDeleted = {};
-
   @override
   Future<void> saveInstitution(Institution value) async {
+    _deletedInstitutions.remove(value.id);
     final index = _institutions.indexWhere((i) => i.id == value.id);
     if (index == -1) {
       _institutions.add(value);
@@ -101,7 +102,7 @@ class MemoryRepository implements Repository {
 
   @override
   Future<void> deleteInstitution(String id) async {
-    _institutionsDeleted.add(id);
+    _deletedInstitutions[id] = DateTime.now().toIso8601String();
     _outbox.add('institutions:$id');
   }
 
@@ -196,8 +197,169 @@ class MemoryRepository implements Repository {
 
   @override
   Future<void> restoreEvent(String id) async {
+    final index = _events.indexWhere((e) => e.id == id);
+    if (index == -1) return;
+    final event = _events[index];
     _deletedEvents.remove(id);
+    if (event.status == EventStatus.completed) {
+      _createAutoRevenue(event);
+      _adjustVisits(event, 1);
+    }
     _outbox.add('events:$id');
+  }
+
+  @override
+  Future<List<TrashEntry>> trash(String companyId) async {
+    final result = <TrashEntry>[
+      for (final entry in _deletedInstitutions.entries)
+        if (_institutions.any(
+          (i) => i.id == entry.key && i.companyId == companyId,
+        ))
+          TrashEntry(
+            id: entry.key,
+            kind: TrashKind.institution,
+            title: _institutions
+                .firstWhere((i) => i.id == entry.key)
+                .displayName,
+            subtitle: _institutions.firstWhere((i) => i.id == entry.key).city,
+            deletedAt: DateTime.parse(entry.value),
+          ),
+      for (final entry in _deletedEvents.entries)
+        if (_events.any((e) => e.id == entry.key && e.companyId == companyId))
+          TrashEntry(
+            id: entry.key,
+            kind: TrashKind.event,
+            title: _events.firstWhere((e) => e.id == entry.key).institutionName,
+            subtitle: _events.firstWhere((e) => e.id == entry.key).programName,
+            deletedAt: DateTime.parse(entry.value),
+          ),
+      for (final entry in _deletedDocuments.entries)
+        if (_documents.any(
+          (d) => d.id == entry.key && d.companyId == companyId,
+        ))
+          TrashEntry(
+            id: entry.key,
+            kind: TrashKind.document,
+            title: _documents.firstWhere((d) => d.id == entry.key).title,
+            subtitle: _documents.firstWhere((d) => d.id == entry.key).number,
+            deletedAt: DateTime.parse(entry.value),
+          ),
+    ]..sort((a, b) => b.deletedAt.compareTo(a.deletedAt));
+    return result;
+  }
+
+  @override
+  Future<void> restoreTrash(TrashKind kind, String id) async {
+    switch (kind) {
+      case TrashKind.institution:
+        _deletedInstitutions.remove(id);
+        _outbox.add('institutions:$id');
+      case TrashKind.event:
+        await restoreEvent(id);
+      case TrashKind.document:
+        _deletedDocuments.remove(id);
+        _outbox.add('documents:$id');
+    }
+  }
+
+  @override
+  Future<int> purgeTrash(String companyId) async {
+    final institutionIds = _deletedInstitutions.entries
+        .where(
+          (entry) => _institutions.any(
+            (i) => i.id == entry.key && i.companyId == companyId,
+          ),
+        )
+        .map((entry) => entry.key)
+        .toSet();
+    final eventIds = _deletedEvents.entries
+        .where(
+          (entry) =>
+              _events.any((e) => e.id == entry.key && e.companyId == companyId),
+        )
+        .map((entry) => entry.key)
+        .toSet();
+    final documentIds = _deletedDocuments.entries
+        .where(
+          (entry) => _documents.any(
+            (d) => d.id == entry.key && d.companyId == companyId,
+          ),
+        )
+        .map((entry) => entry.key)
+        .toSet();
+
+    for (final id in eventIds) {
+      _revenues.removeWhere((revenue) => revenue.eventId == id);
+    }
+    _revenues.removeWhere(
+      (revenue) =>
+          revenue.companyId == companyId &&
+          revenue.eventId != null &&
+          eventIds.contains(revenue.eventId),
+    );
+    if (eventIds.isNotEmpty) {
+      _deductionUsed[companyId] = _revenues
+          .where(
+            (revenue) => revenue.companyId == companyId && !revenue.isReversed,
+          )
+          .fold<int>(0, (sum, revenue) => sum + revenue.taxDeductionKopecks);
+      _deductionUsed[companyId] = max(0, _deductionUsed[companyId]!);
+    }
+    _events.removeWhere((event) => eventIds.contains(event.id));
+    _institutions.removeWhere(
+      (institution) => institutionIds.contains(institution.id),
+    );
+    _documents.removeWhere((document) => documentIds.contains(document.id));
+    for (final id in institutionIds) {
+      _deletedInstitutions.remove(id);
+      _outbox.add('institutions:$id');
+    }
+    for (final id in eventIds) {
+      _deletedEvents.remove(id);
+      _outbox.add('events:$id');
+    }
+    for (final id in documentIds) {
+      _deletedDocuments.remove(id);
+      _outbox.add('documents:$id');
+    }
+    return institutionIds.length + eventIds.length + documentIds.length;
+  }
+
+  @override
+  Future<void> resetCompanyData(String companyId) async {
+    final institutionIds = _institutions
+        .where((institution) => institution.companyId == companyId)
+        .map((institution) => institution.id)
+        .toSet();
+    final eventIds = _events
+        .where((event) => event.companyId == companyId)
+        .map((event) => event.id)
+        .toSet();
+    final documentIds = _documents
+        .where((document) => document.companyId == companyId)
+        .map((document) => document.id)
+        .toSet();
+    _revenues.removeWhere((revenue) => revenue.companyId == companyId);
+    _events.removeWhere((event) => event.companyId == companyId);
+    _institutions.removeWhere(
+      (institution) => institution.companyId == companyId,
+    );
+    _documents.removeWhere((document) => document.companyId == companyId);
+    _programs.removeWhere((program) => program.companyId == companyId);
+    _templates.removeWhere((template) => template.companyId == companyId);
+    _deductionUsed.remove(companyId);
+    for (final id in institutionIds) {
+      _deletedInstitutions.remove(id);
+      _outbox.add('institutions:$id');
+    }
+    for (final id in eventIds) {
+      _deletedEvents.remove(id);
+      _outbox.add('events:$id');
+    }
+    for (final id in documentIds) {
+      _deletedDocuments.remove(id);
+      _outbox.add('documents:$id');
+    }
   }
 
   @override
@@ -293,11 +455,18 @@ class MemoryRepository implements Repository {
 
   @override
   Future<List<DocumentRecord>> documents(String companyId) async =>
-      _documents.where((d) => d.companyId == companyId).toList()
+      _documents
+          .where(
+            (d) =>
+                d.companyId == companyId &&
+                !_deletedDocuments.containsKey(d.id),
+          )
+          .toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
   @override
   Future<void> addDocument(DocumentRecord value) async {
+    _deletedDocuments.remove(value.id);
     _documents.add(value);
     _outbox.add('documents:${value.id}');
   }
@@ -323,7 +492,7 @@ class MemoryRepository implements Repository {
 
   @override
   Future<void> deleteDocument(String id) async {
-    _documents.removeWhere((document) => document.id == id);
+    _deletedDocuments[id] = DateTime.now().toIso8601String();
     _outbox.add('documents:$id');
   }
 

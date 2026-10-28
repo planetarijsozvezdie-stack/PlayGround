@@ -418,6 +418,9 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
   final _search = TextEditingController();
   _DocumentSort _sort = _DocumentSort.newest;
   bool _signedOnly = false;
+  static const int _pageSize = 50;
+  int _visibleCount = _pageSize;
+  String _filterSignature = '';
 
   @override
   void dispose() {
@@ -457,6 +460,17 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
     final documents =
         ref.watch(documentsProvider).valueOrNull ?? const <DocumentRecord>[];
     final visible = _visible(documents);
+    final signature = [
+      _search.text.trim().toLowerCase(),
+      _sort.name,
+      _signedOnly ? '1' : '0',
+    ].join('|');
+    if (signature != _filterSignature) {
+      _filterSignature = signature;
+      _visibleCount = _pageSize;
+    }
+    final shown = visible.take(_visibleCount).toList();
+    final hasMore = visible.length > shown.length;
     final completed = (ref.watch(eventsProvider).valueOrNull ?? const <Event>[])
         .where((e) => e.status == EventStatus.completed)
         .toList();
@@ -467,7 +481,8 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
           children: [
             Expanded(
               child: _SectionHint(
-                '${documentsCountLabel(visible.length)}'
+                '${documentsCountLabel(shown.length)}'
+                '${hasMore ? ' из ${visible.length}' : ''}'
                 '${_search.text.trim().isEmpty ? '' : ' из ${documents.length}'}'
                 ' · ${kIsWeb ? 'PDF доступны до перезагрузки страницы' : 'локальное хранилище'}',
               ),
@@ -550,7 +565,7 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
         if (visible.isEmpty)
           _ArchiveEmpty(searching: documents.isNotEmpty)
         else
-          for (final document in visible)
+          for (final document in shown)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Container(
@@ -646,6 +661,17 @@ class _ArchiveTabState extends ConsumerState<_ArchiveTab> {
                 ),
               ),
             ),
+        if (hasMore)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Center(
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() => _visibleCount += _pageSize),
+                icon: const Icon(Icons.expand_more),
+                label: const Text('Показать ещё 50'),
+              ),
+            ),
+          ),
       ],
     );
   }

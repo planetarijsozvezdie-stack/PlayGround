@@ -37,6 +37,14 @@ abstract class Repository {
 
   Future<void> restoreEvent(String id);
 
+  Future<List<TrashEntry>> trash(String companyId);
+
+  Future<void> restoreTrash(TrashKind kind, String id);
+
+  Future<int> purgeTrash(String companyId);
+
+  Future<void> resetCompanyData(String companyId);
+
   Future<List<Revenue>> revenues(String companyId);
 
   Future<void> addRevenue(Revenue value);

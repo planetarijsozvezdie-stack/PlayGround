@@ -45,7 +45,7 @@ class InstitutionDraft {
   final List<String> tags;
 
   String get dedupeKey =>
-      institutionDedupeKey(type: type, number: number, city: city);
+      institutionDedupeKey(type: type, number: number, city: city, name: name);
 }
 
 class ImportParseResult {
@@ -160,10 +160,16 @@ String institutionDedupeKey({
   required InstitutionType type,
   required String number,
   required String city,
+  String name = '',
 }) {
+  final normalizedCity = normalizeImportText(city);
   final normalizedNumber = normalizeImportText(number);
-  if (normalizedNumber.isEmpty) return '';
-  return '${type.name}|$normalizedNumber|${normalizeImportText(city)}';
+  if (normalizedNumber.isNotEmpty) {
+    return '${type.name}|$normalizedNumber|$normalizedCity';
+  }
+  final normalizedName = normalizeImportText(name);
+  if (normalizedName.isEmpty) return '';
+  return '${type.name}|name:$normalizedName|$normalizedCity';
 }
 
 String normalizeImportText(String value) => value

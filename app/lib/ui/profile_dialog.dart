@@ -6,6 +6,7 @@ import '../core/pin.dart';
 import '../services/biometric_service.dart';
 import '../state/providers.dart';
 import 'device_platform.dart';
+import 'trash_dialog.dart';
 import '../theme.dart';
 
 Future<void> showProfileDialog(BuildContext context, WidgetRef ref) {
@@ -134,6 +135,30 @@ class _ProfileDialogState extends ConsumerState<_ProfileDialog> {
     });
   }
 
+  Future<void> _resetCompanyData() async {
+    final company = ref.read(sessionProvider).company;
+    if (company == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await confirmDestructive(
+      context,
+      title: 'Сбросить данные компании?',
+      message:
+          'Будут удалены учреждения, мероприятия, выручка, документы, '
+          'шаблоны и история компании «${company.shortName}». '
+          'Сама компания и настройки приложения сохранятся. '
+          'Действие необратимо.',
+      action: 'Сбросить',
+    );
+    if (!confirmed || !mounted) return;
+    await ref.read(repositoryProvider).resetCompanyData(company.id);
+    invalidateBusinessData(ref);
+    if (!mounted) return;
+    Navigator.pop(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Данные компании сброшены')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -248,6 +273,17 @@ class _ProfileDialogState extends ConsumerState<_ProfileDialog> {
                       'PIN хранится в виде хеша. База данных шифруется '
                       'SQLCipher, ключ хранится в защищённом хранилище Android.',
                       style: TextStyle(fontSize: 11, color: CosmicColors.muted),
+                    ),
+                    const Divider(height: 24),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _resetCompanyData,
+                        style: TextButton.styleFrom(
+                          foregroundColor: CosmicColors.danger,
+                        ),
+                        child: const Text('Сбросить данные компании'),
+                      ),
                     ),
                   ],
                 ),
